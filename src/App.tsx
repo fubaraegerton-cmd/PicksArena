@@ -1,90 +1,135 @@
-import { NavLink, Route, Routes } from 'react-router-dom';
-import { useState } from 'react';
+import { useEffect } from 'react';
+import { Link, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useStore } from './store';
 import { money } from './lib/format';
+import { useTheme } from './lib/device';
+import { Icon, type IconName } from './components/Icon';
 import { Board } from './pages/Board';
 import { Lineups } from './pages/Lineups';
 import { HowToPlay } from './pages/HowToPlay';
+import { Account } from './pages/Account';
 
-function Header() {
-  const { balance, entries, deposit, resetAccount } = useStore();
-  const [menu, setMenu] = useState(false);
-  const openCount = entries.filter((e) => e.status === 'open').length;
+const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
+  { to: '/', label: 'Board', icon: 'board', end: true },
+  { to: '/lineups', label: 'Lineups', icon: 'ticket' },
+  { to: '/how-to-play', label: 'Rules', icon: 'info' },
+  { to: '/account', label: 'Account', icon: 'user' },
+];
+
+function Mark({ size = 28 }: { size?: number }) {
   return (
-    <header className="topbar">
-      <NavLink to="/" className="logo" aria-label="PicksArena home">
-        <svg viewBox="0 0 64 64" width="28" height="28" aria-hidden>
-          <path d="M14 46 32 14l18 32H38l-6-11-6 11z" fill="var(--accent)" />
-          <circle cx="32" cy="40" r="4" fill="var(--more)" />
-        </svg>
-        <span>
-          Picks<b>Arena</b>
-        </span>
-      </NavLink>
-      <nav className="nav">
-        <NavLink to="/" end>
-          Board
-        </NavLink>
-        <NavLink to="/lineups">
-          My Lineups{openCount > 0 && <span className="badge">{openCount}</span>}
-        </NavLink>
-        <NavLink to="/how-to-play">How to play</NavLink>
+    <svg viewBox="0 0 512 512" width={size} height={size} aria-hidden className="mark">
+      <rect width="512" height="512" rx="112" fill="var(--ink)" />
+      <path d="M156 236 256 136l100 100" fill="none" stroke="var(--volt)" strokeWidth="56" strokeLinecap="square" />
+      <path d="M156 296l100 100 100-100" fill="none" stroke="var(--bg)" strokeWidth="56" strokeLinecap="square" />
+    </svg>
+  );
+}
+
+function Brand() {
+  return (
+    <Link to="/" className="brand" aria-label="PicksArena home">
+      <Mark />
+      <span className="wordmark">
+        Picks<span>Arena</span>
+      </span>
+    </Link>
+  );
+}
+
+function OpenBadge() {
+  const { entries } = useStore();
+  const n = entries.filter((e) => e.status === 'open').length;
+  return n > 0 ? <span className="nav-badge">{n}</span> : null;
+}
+
+/** Desktop / tablet-landscape sidebar */
+function Sidebar() {
+  const { balance } = useStore();
+  return (
+    <aside className="sidebar">
+      <Brand />
+      <nav className="side-nav" aria-label="Main">
+        {NAV.map((n) => (
+          <NavLink key={n.to} to={n.to} end={n.end}>
+            <Icon name={n.icon} size={20} />
+            <span>{n.label}</span>
+            {n.to === '/lineups' && <OpenBadge />}
+          </NavLink>
+        ))}
       </nav>
-      <div className="wallet">
-        <button type="button" className="balance" onClick={() => setMenu((m) => !m)} aria-expanded={menu}>
-          {money(balance)}
-          <span className="plus">+</span>
-        </button>
-        {menu && (
-          <div className="wallet-menu" onMouseLeave={() => setMenu(false)}>
-            <p className="muted tiny">Demo credits</p>
-            {[25, 100, 500].map((n) => (
-              <button
-                key={n}
-                type="button"
-                onClick={() => {
-                  deposit(n);
-                  setMenu(false);
-                }}
-              >
-                Add ${n}
-              </button>
-            ))}
-            <button
-              type="button"
-              className="danger"
-              onClick={() => {
-                if (confirm('Reset balance and delete all lineups?')) resetAccount();
-                setMenu(false);
-              }}
-            >
-              Reset account
-            </button>
-          </div>
-        )}
-      </div>
+      <Link to="/account" className="side-wallet">
+        <span className="eyebrow">Balance</span>
+        <strong>{money(balance)}</strong>
+        <span className="add">
+          <Icon name="plus" size={14} strokeWidth={3} /> Add credits
+        </span>
+      </Link>
+    </aside>
+  );
+}
+
+/** Mobile top app bar */
+function AppBar() {
+  const { balance } = useStore();
+  return (
+    <header className="appbar">
+      <Brand />
+      <Link to="/account" className="balance-pill" aria-label={`Balance ${money(balance)}, open account`}>
+        <span>{money(balance)}</span>
+        <span className="plus">
+          <Icon name="plus" size={12} strokeWidth={3.5} />
+        </span>
+      </Link>
     </header>
+  );
+}
+
+/** Mobile bottom tab bar */
+function TabBar() {
+  return (
+    <nav className="tabbar" aria-label="Main">
+      {NAV.map((n) => (
+        <NavLink key={n.to} to={n.to} end={n.end}>
+          <span className="tab-ico">
+            <Icon name={n.icon} size={22} />
+            {n.to === '/lineups' && <OpenBadge />}
+          </span>
+          <span>{n.label}</span>
+        </NavLink>
+      ))}
+    </nav>
   );
 }
 
 export default function App() {
   const { toast } = useStore();
+  const { pathname } = useLocation();
+  useTheme();
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [pathname]);
+
   return (
-    <>
-      <Header />
-      <main>
+    <div className="shell">
+      <Sidebar />
+      <AppBar />
+      <main className="content" key={pathname}>
         <Routes>
           <Route path="/" element={<Board />} />
           <Route path="/lineups" element={<Lineups />} />
           <Route path="/how-to-play" element={<HowToPlay />} />
+          <Route path="/account" element={<Account />} />
           <Route path="*" element={<Board />} />
         </Routes>
       </main>
+      <TabBar />
       {toast && (
-        <div className="toast" role="status">
+        <div className="toast" role="status" key={toast}>
           {toast}
         </div>
       )}
-    </>
+    </div>
   );
 }

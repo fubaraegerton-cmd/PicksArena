@@ -173,7 +173,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       entries: [entry, ...s.entries],
       picks: [],
     }));
-    setToast('Lineup submitted — good luck!');
+    setToast('Entry placed. Good luck.');
     return entry;
   }, [state.picks, state.amount, state.balance, byId, effectivePlayType]);
 

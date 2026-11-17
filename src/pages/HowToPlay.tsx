@@ -1,82 +1,79 @@
 import { Link } from 'react-router-dom';
 import { FLEX_TABLE, POWER_TABLE } from '../lib/payouts';
+import { Icon } from '../components/Icon';
+
+const STEPS = [
+  { t: 'Pick 2–6 players', d: 'Every player has a projected stat line, like 24.5 points. Mix sports if you like. Lineups need players from at least two teams.' },
+  { t: 'Call More or Less', d: 'Decide whether each player beats the line or falls short. Lines end in .5, so there are no ties.' },
+  { t: 'Choose Power or Flex', d: 'Power pays the most, but every pick has to hit. Flex still pays out when you miss one (or two on 5 and 6 picks).' },
+];
 
 export function HowToPlay() {
   return (
     <div className="page narrow">
-      <h1>How to play</h1>
+      <header className="page-head">
+        <p className="eyebrow">The rules</p>
+        <h1>How it works</h1>
+      </header>
+
       <ol className="steps">
-        <li>
-          <span className="step-n">1</span>
-          <div>
-            <h3>Pick your players</h3>
-            <p className="muted">Browse projections across sports and select 2 to 6 players. Each player has a stat line, like 24.5 Points.</p>
-          </div>
-        </li>
-        <li>
-          <span className="step-n">2</span>
-          <div>
-            <h3>More or Less</h3>
-            <p className="muted">Predict whether each player will get more or less than their projected line. Lineups need players from at least 2 teams.</p>
-          </div>
-        </li>
-        <li>
-          <span className="step-n">3</span>
-          <div>
-            <h3>Choose your play & enter</h3>
-            <p className="muted">Power Plays pay more but every pick must hit. Flex Plays still pay out if you miss one (or two on 5–6 picks).</p>
-          </div>
-        </li>
+        {STEPS.map((s, i) => (
+          <li key={s.t}>
+            <span className="step-n">{String(i + 1).padStart(2, '0')}</span>
+            <div>
+              <h3>{s.t}</h3>
+              <p>{s.d}</p>
+            </div>
+          </li>
+        ))}
       </ol>
 
-      <h2>Payouts</h2>
-      <div className="pay-tables">
-        <table>
-          <caption>Power Play</caption>
-          <thead>
-            <tr>
-              <th>Picks</th>
-              <th>All correct</th>
-            </tr>
-          </thead>
-          <tbody>
+      <h2 className="section-title">Payouts</h2>
+      <div className="paygrid">
+        <section className="paycard">
+          <header>
+            <h3>Power</h3>
+            <p>All picks must hit</p>
+          </header>
+          <dl>
             {Object.entries(POWER_TABLE).map(([n, m]) => (
-              <tr key={n}>
-                <td>{n}</td>
-                <td>{m}x</td>
-              </tr>
+              <div key={n}>
+                <dt>{n} picks</dt>
+                <dd>{m}×</dd>
+              </div>
             ))}
-          </tbody>
-        </table>
-        <table>
-          <caption>Flex Play</caption>
-          <thead>
-            <tr>
-              <th>Picks</th>
-              <th>Payouts</th>
-            </tr>
-          </thead>
-          <tbody>
+          </dl>
+        </section>
+        <section className="paycard">
+          <header>
+            <h3>Flex</h3>
+            <p>Room for a miss</p>
+          </header>
+          <dl>
             {Object.entries(FLEX_TABLE).map(([n, t]) => (
-              <tr key={n}>
-                <td>{n}</td>
-                <td>
+              <div key={n}>
+                <dt>{n} picks</dt>
+                <dd className="flexpay">
                   {Object.entries(t)
                     .sort((a, b) => Number(b[0]) - Number(a[0]))
-                    .map(([h, m]) => `${h}/${n}: ${m}x`)
-                    .join(' · ')}
-                </td>
-              </tr>
+                    .map(([h, m]) => (
+                      <span key={h}>
+                        <small>{h}/{n}</small> {m}×
+                      </span>
+                    ))}
+                </dd>
+              </div>
             ))}
-          </tbody>
-        </table>
+          </dl>
+        </section>
       </div>
 
-      <p className="muted small">
-        PicksArena is a demo. Players, teams and lines are fictional and generated; all balances are play-money credits.
+      <p className="fine left">
+        PicksArena is a demo. Players, teams and lines are fictional and generated. Balances are play-money credits.
       </p>
-      <Link to="/" className="btn primary">
-        Start picking
+      <Link to="/" className="cta inline">
+        <span>Go to the board</span>
+        <Icon name="arrow" size={18} />
       </Link>
     </div>
   );

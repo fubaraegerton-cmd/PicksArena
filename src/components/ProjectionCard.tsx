@@ -1,6 +1,8 @@
-import { memo } from 'react';
+import { memo, type CSSProperties } from 'react';
 import type { Direction, Projection } from '../types';
-import { countdown, gameTime, initials } from '../lib/format';
+import { countdown, gameTime } from '../lib/format';
+import { haptic } from '../lib/device';
+import { Icon } from './Icon';
 
 interface Props {
   projection: Projection;
@@ -9,57 +11,86 @@ interface Props {
   onPick: (id: string, d: Direction) => void;
 }
 
+export function Jersey({ color, number, size = 'md' }: { color: string; number?: number; size?: 'sm' | 'md' }) {
+  return (
+    <span className={`jersey jersey-${size}`} style={{ '--team': color } as CSSProperties} aria-hidden>
+      {number ?? ''}
+    </span>
+  );
+}
+
 function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
   const started = p.game.startsAt <= now;
-  const cd = countdown(p.game.startsAt, now);
+  const soon = countdown(p.game.startsAt, now);
   const isHome = p.game.home.abbr === p.player.team.abbr;
+  const pick = (d: Direction) => {
+    haptic(selected === d ? 4 : 10);
+    onPick(p.id, d);
+  };
+
   return (
-    <article className={`card proj ${selected ? 'is-selected' : ''}`} aria-label={`${p.player.name} ${p.line} ${p.statType}`}>
-      {p.tag && (
-        <span className={`tag tag-${p.tag}`}>{p.tag === 'hot' ? '🔥 Popular' : '📈 Trending'}</span>
-      )}
-      <div className="avatar" style={{ '--team': p.player.team.color } as React.CSSProperties}>
-        {initials(p.player.name)}
+    <article
+      className={`pcard ${selected ? `is-${selected}` : ''}`}
+      style={{ '--team': p.player.team.color } as CSSProperties}
+      aria-label={`${p.player.name}, ${p.line} ${p.statType}`}
+    >
+      <div className="pcard-top">
+        <div className="pcard-who">
+          <div className="pcard-meta">
+            <span className="team-abbr">{p.player.team.abbr}</span>
+            <span>{p.player.position}</span>
+            {p.tag && (
+              <span className={`flag flag-${p.tag}`}>
+                <Icon name={p.tag === 'hot' ? 'flame' : 'trend'} size={11} strokeWidth={2.5} />
+                {p.tag === 'hot' ? 'Hot' : 'Moving'}
+              </span>
+            )}
+          </div>
+          <h3 className="pcard-name">{p.player.name}</h3>
+          <p className="pcard-game">
+            <span>
+              {isHome ? 'vs' : '@'} {p.opponent.abbr}
+            </span>
+            <span className="dot" />
+            {soon && !started ? <span className="soon">{soon}</span> : <span>{gameTime(p.game.startsAt, now)}</span>}
+          </p>
+        </div>
+        <Jersey color={p.player.team.color} number={p.player.number} />
       </div>
-      <div className="proj-meta">
-        <span className="team-chip" style={{ background: p.player.team.color }}>
-          {p.player.team.abbr}
+
+      <div className="pcard-line">
+        <span className="num">{p.line}</span>
+        <span className="stat">{p.statType}</span>
+      </div>
+
+      <div className="pcard-pct" title="Share of entries picking More">
+        <span className="bar">
+          <i style={{ width: `${p.moreShare}%` }} />
         </span>
-        <span className="muted">· {p.player.position}</span>
+        <span>{p.moreShare}% more</span>
       </div>
-      <h3 className="proj-name">{p.player.name}</h3>
-      <p className="muted small">
-        {isHome ? 'vs' : '@'} {p.opponent.abbr} · {cd && !started ? <span className="soon">{cd}</span> : gameTime(p.game.startsAt, now)}
-      </p>
-      <div className="line">
-        <strong>{p.line}</strong>
-        <span>{p.statType}</span>
-      </div>
-      <div className="split">
+
+      <div className="pcard-actions" role="group" aria-label="Pick direction">
         <button
           type="button"
-          className={`pick-btn less ${selected === 'less' ? 'on' : ''}`}
+          className={`pick less ${selected === 'less' ? 'on' : ''}`}
           disabled={started}
           aria-pressed={selected === 'less'}
-          onClick={() => onPick(p.id, 'less')}
+          onClick={() => pick('less')}
         >
-          ↓ Less
+          <Icon name="down" size={16} strokeWidth={2.75} />
+          Less
         </button>
         <button
           type="button"
-          className={`pick-btn more ${selected === 'more' ? 'on' : ''}`}
+          className={`pick more ${selected === 'more' ? 'on' : ''}`}
           disabled={started}
           aria-pressed={selected === 'more'}
-          onClick={() => onPick(p.id, 'more')}
+          onClick={() => pick('more')}
         >
-          ↑ More
+          More
+          <Icon name="up" size={16} strokeWidth={2.75} />
         </button>
-      </div>
-      <div className="share" title="Share of entries picking More">
-        <div className="share-bar">
-          <span style={{ width: `${p.moreShare}%` }} />
-        </div>
-        <span className="muted tiny">{p.moreShare}% More</span>
       </div>
     </article>
   );

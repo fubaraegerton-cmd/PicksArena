@@ -57,6 +57,7 @@ export function generateBoard(dayKey: string, now = Date.now()): Projection[] {
             id: `${sport.id}-${team.abbr}-${p}`,
             name,
             position,
+            number: 1 + Math.floor(rand() * 98),
             team,
             sport: sport.id as SportId,
           };

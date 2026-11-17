@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
 import { StoreProvider } from './store';
+import '@fontsource-variable/archivo/wdth.css';
 import './styles.css';
 
 createRoot(document.getElementById('root')!).render(

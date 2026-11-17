@@ -1,9 +1,12 @@
 import { useMemo } from 'react';
 import { useStore } from '../store';
-import { MAX_PICKS, MIN_ENTRY, flexAvailable, maxMultiplier, payoutTiers, validateLineup } from '../lib/payouts';
-import { initials, money } from '../lib/format';
+import { MAX_PICKS, MIN_ENTRY, MAX_ENTRY, flexAvailable, maxMultiplier, payoutTiers, validateLineup } from '../lib/payouts';
+import { money } from '../lib/format';
+import { haptic } from '../lib/device';
+import { Icon } from './Icon';
+import { Jersey } from './ProjectionCard';
 
-const QUICK_AMOUNTS = [5, 10, 25, 50];
+const QUICK = [5, 10, 25, 50];
 
 export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
   const {
@@ -18,149 +21,190 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
   );
   const mult = maxMultiplier(playType, n);
   const tiers = payoutTiers(playType, n);
+  const safeAmount = Number.isFinite(amount) ? amount : 0;
 
   if (n === 0) {
     return (
-      <div className="slip empty">
-        <div className="slip-empty-icon">🎯</div>
-        <h3>Build your lineup</h3>
+      <div className="ticket ticket-empty">
+        <p className="eyebrow">Entry ticket</p>
+        <div className="empty-arrows" aria-hidden>
+          <Icon name="up" size={28} strokeWidth={3} />
+          <Icon name="down" size={28} strokeWidth={3} />
+        </div>
+        <h3>Your ticket is empty</h3>
         <p className="muted">
-          Pick <strong>More</strong> or <strong>Less</strong> on 2–{MAX_PICKS} player projections. Get them right
-          to win up to <strong>{maxMultiplier('power', MAX_PICKS)}x</strong> your entry.
+          Call <b>More</b> or <b>Less</b> on 2–{MAX_PICKS} players. Hit them all to win up to{' '}
+          <b>{maxMultiplier('power', MAX_PICKS)}×</b>.
         </p>
       </div>
     );
   }
 
   return (
-    <div className="slip">
-      <header className="slip-head">
-        <h3>
-          Current lineup <span className="count">{n}</span>
-        </h3>
-        <button type="button" className="link" onClick={clearPicks}>
-          Clear
+    <div className="ticket">
+      <header className="ticket-head">
+        <div>
+          <p className="eyebrow">Entry ticket</p>
+          <h3>
+            {n} pick{n > 1 ? 's' : ''}
+            <span className="muted"> / {MAX_PICKS}</span>
+          </h3>
+        </div>
+        <button type="button" className="text-btn" onClick={() => { haptic(6); clearPicks(); }}>
+          Clear all
         </button>
       </header>
 
-      <ul className="slip-list">
+      <ul className="tk-picks">
         {picks.map((pk) => {
           const p = byId.get(pk.projectionId);
           if (!p) return null;
           return (
-            <li key={pk.projectionId} className="slip-item">
-              <div className="avatar sm" style={{ '--team': p.player.team.color } as React.CSSProperties}>
-                {initials(p.player.name)}
-              </div>
-              <div className="slip-info">
+            <li key={pk.projectionId} className="tk-pick">
+              <Jersey color={p.player.team.color} number={p.player.number} size="sm" />
+              <div className="tk-info">
                 <strong>{p.player.name}</strong>
-                <span className="muted small">
-                  {p.player.team.abbr} · {p.line} {p.statType}
+                <span>
+                  <b className="tk-line">{p.line}</b> {p.statType}
                 </span>
               </div>
-              <div className="mini-toggle" role="group" aria-label="Direction">
+              <div className="seg seg-sm" role="group" aria-label={`${p.player.name} direction`}>
                 <button
                   type="button"
                   className={pk.direction === 'less' ? 'on less' : ''}
-                  onClick={() => pk.direction !== 'less' && togglePick(p.id, 'less')}
+                  aria-pressed={pk.direction === 'less'}
+                  onClick={() => pk.direction !== 'less' && (haptic(8), togglePick(p.id, 'less'))}
                 >
-                  Less
+                  <Icon name="down" size={14} strokeWidth={3} />
+                  <span className="sr">Less</span>
                 </button>
                 <button
                   type="button"
                   className={pk.direction === 'more' ? 'on more' : ''}
-                  onClick={() => pk.direction !== 'more' && togglePick(p.id, 'more')}
+                  aria-pressed={pk.direction === 'more'}
+                  onClick={() => pk.direction !== 'more' && (haptic(8), togglePick(p.id, 'more'))}
                 >
-                  More
+                  <Icon name="up" size={14} strokeWidth={3} />
+                  <span className="sr">More</span>
                 </button>
               </div>
-              <button type="button" className="x" aria-label={`Remove ${p.player.name}`} onClick={() => removePick(p.id)}>
-                ×
+              <button type="button" className="icon-btn" aria-label={`Remove ${p.player.name}`} onClick={() => removePick(p.id)}>
+                <Icon name="close" size={16} />
               </button>
             </li>
           );
         })}
       </ul>
 
-      <div className="playtype" role="radiogroup" aria-label="Play type">
+      <div className="seg seg-play" role="radiogroup" aria-label="Play type">
         <button
           type="button"
           role="radio"
           aria-checked={playType === 'power'}
           className={playType === 'power' ? 'on' : ''}
-          onClick={() => setPlayType('power')}
+          onClick={() => { haptic(6); setPlayType('power'); }}
         >
-          <strong>Power Play</strong>
-          <span>All picks must hit</span>
+          Power
         </button>
         <button
           type="button"
           role="radio"
           aria-checked={playType === 'flex'}
-          disabled={!flexAvailable(n)}
           className={playType === 'flex' ? 'on' : ''}
-          onClick={() => setPlayType('flex')}
-          title={flexAvailable(n) ? '' : 'Add at least 3 picks for Flex'}
+          disabled={!flexAvailable(n)}
+          onClick={() => { haptic(6); setPlayType('flex'); }}
         >
-          <strong>Flex Play</strong>
-          <span>{flexAvailable(n) ? 'Win even with a miss' : 'Needs 3+ picks'}</span>
+          Flex
         </button>
       </div>
+      <p className="play-hint">
+        {playType === 'power'
+          ? 'Every pick must hit. Biggest payout.'
+          : 'Still pays if you miss one' + (n >= 5 ? ' or two.' : '.')}
+        {!flexAvailable(n) && ' Add a 3rd pick to unlock Flex.'}
+      </p>
 
-      {tiers.length > 0 && (
-        <div className="tiers">
-          {tiers.map((t) => (
-            <div key={t.hits} className="tier">
-              <span>
-                {t.hits}/{n} correct
-              </span>
-              <strong>{t.mult}x</strong>
-              <span className="muted">{money(amount * t.mult)}</span>
-            </div>
+      <div className="perf" aria-hidden />
+
+      <dl className="tiers">
+        {tiers.map((t) => (
+          <div key={t.hits} className="tier">
+            <dt>
+              {t.hits} of {n} correct
+            </dt>
+            <dd>
+              <span className="mult">{t.mult}×</span>
+              <span className="amt">{money(safeAmount * t.mult)}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      <div className="stake">
+        <label className="stake-field">
+          <span className="eyebrow">Entry</span>
+          <div className="stepper">
+            <button
+              type="button"
+              aria-label="Decrease entry"
+              onClick={() => setAmount(Math.max(MIN_ENTRY, Math.round(safeAmount) - 1))}
+            >
+              −
+            </button>
+            <span className="cur">$</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={MIN_ENTRY}
+              max={MAX_ENTRY}
+              value={Number.isFinite(amount) ? amount : ''}
+              onChange={(e) => setAmount(e.target.value === '' ? NaN : Number(e.target.value))}
+              aria-label="Entry amount in dollars"
+            />
+            <button
+              type="button"
+              aria-label="Increase entry"
+              onClick={() => setAmount(Math.min(MAX_ENTRY, Math.round(safeAmount) + 1))}
+            >
+              +
+            </button>
+          </div>
+        </label>
+        <div className="chips-row">
+          {QUICK.map((q) => (
+            <button key={q} type="button" className={`chip ${amount === q ? 'on' : ''}`} onClick={() => { haptic(4); setAmount(q); }}>
+              ${q}
+            </button>
           ))}
         </div>
+      </div>
+
+      <div className="payout">
+        <span className="eyebrow">Pays up to</span>
+        <span className="payout-num">{mult && safeAmount ? money(safeAmount * mult) : '—'}</span>
+      </div>
+
+      {!validation.ok && (
+        <p className="ticket-error" role="alert">
+          {validation.errors[0]}
+        </p>
       )}
-
-      <label className="amount">
-        <span className="muted small">Entry amount</span>
-        <div className="amount-row">
-          <span className="dollar">$</span>
-          <input
-            type="number"
-            inputMode="decimal"
-            min={MIN_ENTRY}
-            step="1"
-            value={Number.isFinite(amount) ? amount : ''}
-            onChange={(e) => setAmount(e.target.value === '' ? NaN : Number(e.target.value))}
-          />
-        </div>
-      </label>
-      <div className="quick">
-        {QUICK_AMOUNTS.map((q) => (
-          <button key={q} type="button" className={amount === q ? 'on' : ''} onClick={() => setAmount(q)}>
-            ${q}
-          </button>
-        ))}
-      </div>
-
-      <div className="to-win">
-        <span>To win</span>
-        <strong>{mult && Number.isFinite(amount) ? money(amount * mult) : '—'}</strong>
-      </div>
-
-      {!validation.ok && <p className="slip-error">{validation.errors[0]}</p>}
 
       <button
         type="button"
-        className="btn primary block"
+        className="cta"
         disabled={!validation.ok}
         onClick={() => {
-          if (submit()) onSubmitted?.();
+          if (submit()) {
+            haptic([12, 40, 18]);
+            onSubmitted?.();
+          }
         }}
       >
-        Place entry
+        <span>Place entry</span>
+        <span className="cta-amt">{money(safeAmount)}</span>
       </button>
-      <p className="muted tiny center">Demo credits only — no real money involved.</p>
+      <p className="fine">Play-money credits only. No real money.</p>
     </div>
   );
 }
