@@ -8,6 +8,7 @@ import { Board } from './pages/Board';
 import { Lineups } from './pages/Lineups';
 import { HowToPlay } from './pages/HowToPlay';
 import { Account } from './pages/Account';
+import { Admin } from './pages/Admin';
 
 const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
   { to: '/', label: 'Board', icon: 'board', end: true },
@@ -121,6 +122,7 @@ export default function App() {
           <Route path="/lineups" element={<Lineups />} />
           <Route path="/how-to-play" element={<HowToPlay />} />
           <Route path="/account" element={<Account />} />
+          <Route path="/admin" element={<Admin />} />
           <Route path="*" element={<Board />} />
         </Routes>
       </main>

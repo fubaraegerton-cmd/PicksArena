@@ -8,7 +8,7 @@ import { haptic } from '../lib/device';
 import { Icon } from '../components/Icon';
 import { Jersey } from '../components/ProjectionCard';
 
-function EntryTicket({ entry, onSettle }: { entry: Entry; onSettle: () => void }) {
+function EntryTicket({ entry, onSettle, ready }: { entry: Entry; onSettle: () => void; ready: boolean }) {
   const n = entry.picks.length;
   const hits = entry.picks.filter((p) => p.result === 'hit').length;
   const open = entry.status === 'open';
@@ -84,7 +84,14 @@ function EntryTicket({ entry, onSettle }: { entry: Entry; onSettle: () => void }
         </p>
       )}
 
-      {open && (
+      {open && !ready && (
+        <p className="waiting">
+          <Icon name="shield" size={15} />
+          Waiting on official results from the house
+        </p>
+      )}
+
+      {open && ready && (
         <button
           type="button"
           className="ghost-btn"
@@ -102,7 +109,7 @@ function EntryTicket({ entry, onSettle }: { entry: Entry; onSettle: () => void }
 }
 
 export function Lineups() {
-  const { entries, settle, settleAll } = useStore();
+  const { entries, settle, settleAll, canSettle } = useStore();
   const [tab, setTab] = useState<'open' | 'settled'>('open');
   const open = entries.filter((e) => e.status === 'open');
   const settled = entries.filter((e) => e.status !== 'open');
@@ -144,7 +151,7 @@ export function Lineups() {
             Settled <span className="cnt">{settled.length}</span>
           </button>
         </div>
-        {tab === 'open' && open.length > 1 && (
+        {tab === 'open' && open.filter(canSettle).length > 1 && (
           <button type="button" className="text-btn" onClick={() => { haptic([10, 30, 10]); settleAll(); }}>
             Simulate all
           </button>
@@ -167,7 +174,7 @@ export function Lineups() {
       ) : (
         <div className="entries">
           {list.map((e) => (
-            <EntryTicket key={e.id} entry={e} onSettle={() => settle(e.id)} />
+            <EntryTicket key={e.id} entry={e} ready={canSettle(e)} onSettle={() => settle(e.id)} />
           ))}
         </div>
       )}

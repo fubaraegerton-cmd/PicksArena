@@ -34,6 +34,12 @@ export interface Projection {
   tag?: 'hot' | 'trending';
   /** Approx. percentage of entries that took "more" */
   moreShare: number;
+  /** Curated by an admin (vs. generated) */
+  source?: 'admin';
+  /** Featured admin pick */
+  special?: boolean;
+  /** Admin's short take */
+  note?: string;
 }
 
 export type Direction = 'more' | 'less';

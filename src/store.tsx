@@ -2,7 +2,20 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import type { Direction, Entry, Pick, PlayType, Projection } from './types';
 import { generateBoard } from './data/generate';
 import { MAX_PICKS, flexAvailable, maxMultiplier, validateLineup } from './lib/payouts';
-import { settleEntry } from './lib/simulate';
+import { fullyResulted, settleEntry } from './lib/simulate';
+import { EMPTY_DATA, type AdminData } from './shared/admin';
+import { adminActuals, adminProjections } from './lib/adminBoard';
+
+const ADMIN_CACHE_KEY = 'picksarena:admin-cache';
+
+function loadAdminCache(): AdminData {
+  try {
+    const raw = localStorage.getItem(ADMIN_CACHE_KEY);
+    return raw ? (JSON.parse(raw) as AdminData) : EMPTY_DATA;
+  } catch {
+    return EMPTY_DATA;
+  }
+}
 
 const STORAGE_KEY = 'picksarena:v1';
 const STARTING_BALANCE = 100;
@@ -61,6 +74,12 @@ interface Store {
   deposit: (n: number) => void;
   resetAccount: () => void;
   notify: (msg: string) => void;
+  /** Admin-curated games and picks (shared across all players) */
+  adminData: AdminData;
+  /** Replace admin data locally, e.g. right after the admin saves a change */
+  setAdminData: (d: AdminData) => void;
+  /** Whether an open entry can be settled now (admin picks need official results first) */
+  canSettle: (e: Entry) => boolean;
 }
 
 const Ctx = createContext<Store | null>(null);
@@ -69,6 +88,40 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<Persisted>(load);
   const [now, setNow] = useState(Date.now());
   const [toast, setToast] = useState<string | null>(null);
+  const [adminData, setAdminDataState] = useState<AdminData>(loadAdminCache);
+
+  const setAdminData = useCallback((d: AdminData) => {
+    setAdminDataState((prev) => (d.version >= prev.version || d.updatedAt >= prev.updatedAt ? d : prev));
+    try {
+      localStorage.setItem(ADMIN_CACHE_KEY, JSON.stringify(d));
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  // Fetch admin games/picks on load, every minute, and when the app comes back to the foreground
+  useEffect(() => {
+    let alive = true;
+    const fetchAdmin = async () => {
+      try {
+        const res = await fetch('/api/board', { cache: 'no-store' });
+        if (!res.ok) return;
+        const d = (await res.json()) as AdminData;
+        if (alive && Array.isArray(d.games)) setAdminData(d);
+      } catch {
+        /* offline — keep cached data */
+      }
+    };
+    fetchAdmin();
+    const id = setInterval(fetchAdmin, 60_000);
+    const onVis = () => document.visibilityState === 'visible' && fetchAdmin();
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      alive = false;
+      clearInterval(id);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [setAdminData]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -89,10 +142,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(id);
   }, [toast]);
 
-  const board = useMemo(
+  const generated = useMemo(
     () => generateBoard(`board-${state.boardAnchor}`, state.boardAnchor),
     [state.boardAnchor],
   );
+  const board = useMemo(() => [...adminProjections(adminData), ...generated], [adminData, generated]);
+  const actuals = useMemo(() => adminActuals(adminData), [adminData]);
   const byId = useMemo(() => new Map(board.map((p) => [p.id, p])), [board]);
 
   // Drop picks that no longer exist on the board
@@ -177,18 +232,32 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return entry;
   }, [state.picks, state.amount, state.balance, byId, effectivePlayType]);
 
+  const canSettle = useCallback(
+    (e: Entry) => e.picks.every((p) => p.projection.source !== 'admin' || actuals.has(p.projection.id)),
+    [actuals],
+  );
+
   const settleWhere = useCallback((pred: (e: Entry) => boolean) => {
     setState((s) => {
       let credit = 0;
       const entries = s.entries.map((e) => {
-        if (e.status !== 'open' || !pred(e)) return e;
-        const settled = settleEntry(e);
+        if (e.status !== 'open' || !pred(e) || !canSettle(e)) return e;
+        const settled = settleEntry(e, Math.random, actuals);
         credit += settled.payout;
         return settled;
       });
       return { ...s, entries, balance: Math.round((s.balance + credit) * 100) / 100 };
     });
-  }, []);
+  }, [actuals, canSettle]);
+
+  // Entries made only of admin picks settle automatically once the admin posts every final stat
+  useEffect(() => {
+    const ready = state.entries.filter((e) => e.status === 'open' && fullyResulted(e, actuals));
+    if (ready.length === 0) return;
+    const ids = new Set(ready.map((e) => e.id));
+    settleWhere((e) => ids.has(e.id));
+    setToast(ready.length === 1 ? 'An entry was settled with official results' : `${ready.length} entries settled with official results`);
+  }, [actuals, state.entries, settleWhere]);
 
   const settle = useCallback((id: string) => settleWhere((e) => e.id === id), [settleWhere]);
   const settleAll = useCallback(() => settleWhere(() => true), [settleWhere]);
@@ -224,6 +293,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     deposit,
     resetAccount,
     notify,
+    adminData,
+    setAdminData,
+    canSettle,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

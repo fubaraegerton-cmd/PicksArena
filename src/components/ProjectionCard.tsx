@@ -30,7 +30,7 @@ function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
 
   return (
     <article
-      className={`pcard ${selected ? `is-${selected}` : ''}`}
+      className={`pcard ${selected ? `is-${selected}` : ''} ${p.special ? 'is-special' : ''}`}
       style={{ '--team': p.player.team.color } as CSSProperties}
       aria-label={`${p.player.name}, ${p.line} ${p.statType}`}
     >
@@ -39,6 +39,12 @@ function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
           <div className="pcard-meta">
             <span className="team-abbr">{p.player.team.abbr}</span>
             <span>{p.player.position}</span>
+            {p.special && (
+              <span className="flag flag-special">
+                <Icon name="star" size={11} strokeWidth={2.5} />
+                Special
+              </span>
+            )}
             {p.tag && (
               <span className={`flag flag-${p.tag}`}>
                 <Icon name={p.tag === 'hot' ? 'flame' : 'trend'} size={11} strokeWidth={2.5} />
@@ -62,6 +68,8 @@ function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
         <span className="num">{p.line}</span>
         <span className="stat">{p.statType}</span>
       </div>
+
+      {p.note && <p className="pcard-note">“{p.note}”</p>}
 
       <div className="pcard-pct" title="Share of entries picking More">
         <span className="bar">

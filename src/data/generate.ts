@@ -89,6 +89,8 @@ export function generateBoard(dayKey: string, now = Date.now()): Projection[] {
 /** Spread for a stat type, used when simulating results. */
 export function statSpread(sport: SportId, position: string, statType: string): number {
   const cfg = SPORTS.find((s) => s.id === sport);
-  const s = cfg?.stats[position]?.find((x) => x.stat === statType);
-  return s?.spread ?? 1;
+  const s =
+    cfg?.stats[position]?.find((x) => x.stat === statType) ??
+    Object.values(cfg?.stats ?? {}).flat().find((x) => x.stat.toLowerCase() === statType.toLowerCase());
+  return s?.spread ?? 1.5;
 }

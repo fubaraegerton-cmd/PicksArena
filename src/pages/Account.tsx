@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import { money } from '../lib/format';
 import { haptic, useInstallPrompt, useTheme, type ThemePref } from '../lib/device';
+import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 
 export function Account() {
@@ -68,6 +69,18 @@ export function Account() {
           </div>
         </section>
       )}
+
+      <section className="group">
+        <h2 className="group-title">House</h2>
+        <Link to="/admin" className="row-card">
+          <Icon name="shield" size={18} />
+          <div>
+            <strong>Admin dashboard</strong>
+            <p>Add games, post special picks and enter results.</p>
+          </div>
+          <Icon name="arrow" size={18} />
+        </Link>
+      </section>
 
       <section className="group">
         <h2 className="group-title">Danger zone</h2>

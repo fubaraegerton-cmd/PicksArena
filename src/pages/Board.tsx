@@ -16,7 +16,10 @@ type Sort = 'time' | 'popular' | 'name';
 export function Board() {
   const { board, picks, now, togglePick, playType, amount } = useStore();
   const [params, setParams] = useSearchParams();
-  const sport = (SPORTS.some((s) => s.id === params.get('sport')) ? params.get('sport') : 'NBA') as SportId;
+  const specialCount = useMemo(() => board.filter((p) => p.special).length, [board]);
+  const param = params.get('sport');
+  const isSpecials = specialCount > 0 && (param === 'SPECIALS' || !param);
+  const sport = (SPORTS.some((s) => s.id === param) ? param : 'NBA') as SportId;
   const [stat, setStat] = useState('All');
   const [gameId, setGameId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -30,7 +33,10 @@ export function Board() {
     return c;
   }, [board]);
 
-  const sportBoard = useMemo(() => board.filter((p) => p.player.sport === sport), [board, sport]);
+  const sportBoard = useMemo(
+    () => (isSpecials ? board.filter((p) => p.special) : board.filter((p) => p.player.sport === sport)),
+    [board, sport, isSpecials],
+  );
 
   const games = useMemo(() => {
     const m = new Map<string, (typeof sportBoard)[number]['game']>();
@@ -67,7 +73,7 @@ export function Board() {
   const selectedMap = useMemo(() => new Map(picks.map((p) => [p.projectionId, p.direction])), [picks]);
   const mult = maxMultiplier(playType, picks.length);
 
-  const changeSport = (id: SportId) => {
+  const changeSport = (id: SportId | 'SPECIALS') => {
     haptic(6);
     setParams({ sport: id }, { replace: true });
     setStat('All');
@@ -79,18 +85,30 @@ export function Board() {
     <div className="board">
       <section className="board-main">
         <header className="page-head">
-          <p className="eyebrow">Today’s board</p>
-          <h1>Call it. More or less.</h1>
+          <p className="eyebrow">{isSpecials ? 'Hand-picked by the house' : 'Today’s board'}</p>
+          <h1>{isSpecials ? 'Specials' : 'Call it. More or less.'}</h1>
         </header>
 
         <div className="board-sticky">
           <nav className="sport-tabs" aria-label="Sports">
+            {specialCount > 0 && (
+              <button
+                type="button"
+                aria-current={isSpecials ? 'page' : undefined}
+                className={`specials-tab ${isSpecials ? 'on' : ''}`}
+                onClick={() => changeSport('SPECIALS')}
+              >
+                <Icon name="star" size={15} strokeWidth={2.5} />
+                Specials
+                <span className="cnt">{specialCount}</span>
+              </button>
+            )}
             {SPORTS.map((s) => (
               <button
                 key={s.id}
                 type="button"
-                aria-current={sport === s.id ? 'page' : undefined}
-                className={sport === s.id ? 'on' : ''}
+                aria-current={!isSpecials && sport === s.id ? 'page' : undefined}
+                className={!isSpecials && sport === s.id ? 'on' : ''}
                 onClick={() => changeSport(s.id)}
               >
                 {s.label}
