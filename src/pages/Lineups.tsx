@@ -163,7 +163,7 @@ export function Lineups() {
           {tab === 'open' ? (
             <>
               <p>No open entries.</p>
-              <Link to="/" className="text-btn">
+              <Link to="/board" className="text-btn">
                 Build a ticket <Icon name="arrow" size={16} />
               </Link>
             </>

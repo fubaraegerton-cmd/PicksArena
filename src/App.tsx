@@ -5,13 +5,15 @@ import { money } from './lib/format';
 import { useTheme } from './lib/device';
 import { Icon, type IconName } from './components/Icon';
 import { Board } from './pages/Board';
+import { Home } from './pages/Home';
 import { Lineups } from './pages/Lineups';
 import { HowToPlay } from './pages/HowToPlay';
 import { Account } from './pages/Account';
 import { Admin } from './pages/Admin';
 
 const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
-  { to: '/', label: 'Board', icon: 'board', end: true },
+  { to: '/', label: 'Home', icon: 'home', end: true },
+  { to: '/board', label: 'Board', icon: 'board' },
   { to: '/lineups', label: 'Lineups', icon: 'ticket' },
   { to: '/how-to-play', label: 'Rules', icon: 'info' },
   { to: '/account', label: 'Account', icon: 'user' },
@@ -118,12 +120,13 @@ export default function App() {
       <AppBar />
       <main className="content" key={pathname}>
         <Routes>
-          <Route path="/" element={<Board />} />
+          <Route path="/" element={<Home />} />
+          <Route path="/board" element={<Board />} />
           <Route path="/lineups" element={<Lineups />} />
           <Route path="/how-to-play" element={<HowToPlay />} />
           <Route path="/account" element={<Account />} />
           <Route path="/admin" element={<Admin />} />
-          <Route path="*" element={<Board />} />
+          <Route path="*" element={<Home />} />
         </Routes>
       </main>
       <TabBar />

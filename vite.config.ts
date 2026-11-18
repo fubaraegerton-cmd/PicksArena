@@ -54,7 +54,7 @@ export default defineConfig({
         name: 'PicksArena',
         short_name: 'PicksArena',
         description: 'Daily fantasy pick’em. Call More or Less on player projections.',
-        start_url: '/',
+        start_url: '/board',
         scope: '/',
         display: 'standalone',
         orientation: 'portrait',

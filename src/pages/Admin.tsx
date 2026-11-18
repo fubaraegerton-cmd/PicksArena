@@ -809,7 +809,7 @@ export function Admin() {
           <h1>House control</h1>
         </div>
         <div className="adm-head-actions">
-          <Link to="/?sport=SPECIALS" className="ghost-sm">
+          <Link to="/board?sport=SPECIALS" className="ghost-sm">
             View as player
           </Link>
           <button

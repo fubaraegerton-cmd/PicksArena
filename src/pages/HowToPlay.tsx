@@ -71,7 +71,7 @@ export function HowToPlay() {
       <p className="fine left">
         PicksArena is a demo. Players, teams and lines are fictional and generated. Balances are play-money credits.
       </p>
-      <Link to="/" className="cta inline">
+      <Link to="/board" className="cta inline">
         <span>Go to the board</span>
         <Icon name="arrow" size={18} />
       </Link>
