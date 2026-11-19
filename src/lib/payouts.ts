@@ -11,7 +11,7 @@ export const POWER_TABLE: Record<number, number> = {
   3: 5,
   4: 10,
   5: 20,
-  6: 37.5,
+  6: 40,
 };
 
 /** Flex Play: pays on a sliding scale. Keyed by pick count → correct count → multiplier. */
