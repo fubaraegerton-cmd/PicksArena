@@ -23,7 +23,7 @@ export function adminProjections(data: AdminData): Projection[] {
         id: `adm-${g.id}-${pk.side}-${slug(pk.playerName)}`,
         name: pk.playerName,
         position: pk.position,
-        number: pk.number ?? 0,
+        number: pk.number,
         team,
         sport: g.sport as SportId,
       },

@@ -1,10 +1,17 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Direction, Entry, Pick, PlayType, Projection } from './types';
 import { generateBoard } from './data/generate';
 import { MAX_PICKS, flexAvailable, maxMultiplier, validateLineup } from './lib/payouts';
 import { fullyResulted, settleEntry } from './lib/simulate';
 import { EMPTY_DATA, type AdminData } from './shared/admin';
 import { adminActuals, adminProjections } from './lib/adminBoard';
+import { ApiError, REAL_MONEY, fetchEntries, fetchWallet, getProfile, placeEntry, supabase, type Profile, type Wallet } from './lib/supabase';
+
+export type SubmitResult = 'ok' | 'signin' | 'profile' | 'error';
+export interface Session {
+  userId: string;
+  email: string | null;
+}
 
 const ADMIN_CACHE_KEY = 'picksarena:admin-cache';
 
@@ -68,7 +75,18 @@ interface Store {
   clearPicks: () => void;
   setPlayType: (t: PlayType) => void;
   setAmount: (n: number) => void;
-  submit: () => Entry | null;
+  /** Places the current ticket. In real-money mode this goes through the server. */
+  submit: () => Promise<SubmitResult>;
+  submitting: boolean;
+  /** True when the app is connected to Supabase and plays for real funds. */
+  realMoney: boolean;
+  session: Session | null;
+  /** Real-money profile (DOB/state). null until the player completes sign-up. */
+  profile: Profile | null;
+  accountLoaded: boolean;
+  wallet: Wallet | null;
+  refreshAccount: () => Promise<void>;
+  signOut: () => Promise<void>;
   settle: (entryId: string) => void;
   settleAll: () => void;
   deposit: (n: number) => void;
@@ -89,6 +107,61 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [now, setNow] = useState(Date.now());
   const [toast, setToast] = useState<string | null>(null);
   const [adminData, setAdminDataState] = useState<AdminData>(loadAdminCache);
+  const [session, setSession] = useState<Session | null>(null);
+  const [profile, setProfile] = useState<Profile | null>(null);
+  const [accountLoaded, setAccountLoaded] = useState(!REAL_MONEY);
+  const [wallet, setWallet] = useState<Wallet | null>(null);
+  const [rmEntries, setRmEntries] = useState<Entry[]>([]);
+  const [submitting, setSubmitting] = useState(false);
+  const ticketKey = useRef<string>(crypto.randomUUID());
+
+  // ----- real-money account: session, profile, wallet, entries -----
+  const refreshAccount = useCallback(async () => {
+    if (!REAL_MONEY || !supabase) return;
+    const { data } = await supabase.auth.getSession();
+    const s = data.session;
+    // Keep the same object while the user is unchanged, so effects keyed on it don't re-run.
+    setSession((prev) => {
+      if (!s) return null;
+      if (prev?.userId === s.user.id && prev.email === (s.user.email ?? null)) return prev;
+      return { userId: s.user.id, email: s.user.email ?? null };
+    });
+    if (!s) {
+      setProfile(null);
+      setWallet(null);
+      setRmEntries([]);
+      setAccountLoaded(true);
+      return;
+    }
+    try {
+      const [p, w, e] = await Promise.all([getProfile(), fetchWallet(), fetchEntries()]);
+      setProfile(p.profile);
+      setWallet(w);
+      setRmEntries(e);
+    } catch {
+      /* keep last known values; the next refresh retries */
+    } finally {
+      setAccountLoaded(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!REAL_MONEY || !supabase) return;
+    refreshAccount();
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') refreshAccount();
+    });
+    const id = setInterval(() => document.visibilityState === 'visible' && refreshAccount(), 30_000);
+    return () => {
+      data.subscription.unsubscribe();
+      clearInterval(id);
+    };
+  }, [refreshAccount]);
+
+  const signOut = useCallback(async () => {
+    await supabase?.auth.signOut();
+    await refreshAccount();
+  }, [refreshAccount]);
 
   const setAdminData = useCallback((d: AdminData) => {
     setAdminDataState((prev) => (d.version >= prev.version || d.updatedAt >= prev.updatedAt ? d : prev));
@@ -142,8 +215,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(id);
   }, [toast]);
 
+  // Real-money mode shows only the house's real lines; the demo adds generated ones.
   const generated = useMemo(
-    () => generateBoard(`board-${state.boardAnchor}`, state.boardAnchor),
+    () => (REAL_MONEY ? [] : generateBoard(`board-${state.boardAnchor}`, state.boardAnchor)),
     [state.boardAnchor],
   );
   const board = useMemo(() => [...adminProjections(adminData), ...generated], [adminData, generated]);
@@ -197,15 +271,48 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const setPlayType = useCallback((playType: PlayType) => setState((s) => ({ ...s, playType })), []);
   const setAmount = useCallback((amount: number) => setState((s) => ({ ...s, amount })), []);
 
-  // Flex isn't valid for 2-pick lineups; fall back to power automatically
+  // Flex isn't valid for 2-pick lineups (and isn't offered for real money); fall back to power
   const effectivePlayType: PlayType =
-    state.playType === 'flex' && !flexAvailable(state.picks.length) ? 'power' : state.playType;
+    REAL_MONEY || (state.playType === 'flex' && !flexAvailable(state.picks.length)) ? 'power' : state.playType;
 
-  const submit = useCallback((): Entry | null => {
+  // A new ticket (picks or stake changed) gets a new idempotency key; retries of the same ticket reuse it.
+  useEffect(() => {
+    ticketKey.current = crypto.randomUUID();
+  }, [state.picks, state.amount]);
+
+  const balance = REAL_MONEY ? wallet?.available ?? 0 : state.balance;
+
+  const submit = useCallback(async (): Promise<SubmitResult> => {
+    if (REAL_MONEY) {
+      if (!session) return 'signin';
+      if (!profile?.dob) return 'profile';
+      const v = validateLineup(state.picks, byId, 'power', state.amount, balance, Date.now());
+      if (!v.ok) {
+        setToast(v.errors[0]);
+        return 'error';
+      }
+      setSubmitting(true);
+      try {
+        await placeEntry(state.picks, Math.round(state.amount * 100), ticketKey.current);
+        setState((s) => ({ ...s, picks: [] }));
+        setToast('Entry placed. Good luck.');
+        await refreshAccount();
+        return 'ok';
+      } catch (e) {
+        const err = e as ApiError;
+        if (err.code === 'profile_required') return 'profile';
+        if (err.status === 401) return 'signin';
+        setToast(err.message);
+        await refreshAccount();
+        return 'error';
+      } finally {
+        setSubmitting(false);
+      }
+    }
     const v = validateLineup(state.picks, byId, effectivePlayType, state.amount, state.balance, Date.now());
     if (!v.ok) {
       setToast(v.errors[0]);
-      return null;
+      return 'error';
     }
     const n = state.picks.length;
     const entry: Entry = {
@@ -229,11 +336,11 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       picks: [],
     }));
     setToast('Entry placed. Good luck.');
-    return entry;
-  }, [state.picks, state.amount, state.balance, byId, effectivePlayType]);
+    return 'ok';
+  }, [state.picks, state.amount, state.balance, byId, effectivePlayType, session, profile, balance, refreshAccount]);
 
   const canSettle = useCallback(
-    (e: Entry) => e.picks.every((p) => p.projection.source !== 'admin' || actuals.has(p.projection.id)),
+    (e: Entry) => !REAL_MONEY && e.picks.every((p) => p.projection.source !== 'admin' || actuals.has(p.projection.id)),
     [actuals],
   );
 
@@ -252,6 +359,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Entries made only of admin picks settle automatically once the admin posts every final stat
   useEffect(() => {
+    if (REAL_MONEY) return; // the server settles real entries
     const ready = state.entries.filter((e) => e.status === 'open' && fullyResulted(e, actuals));
     if (ready.length === 0) return;
     const ids = new Set(ready.map((e) => e.id));
@@ -262,12 +370,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const settle = useCallback((id: string) => settleWhere((e) => e.id === id), [settleWhere]);
   const settleAll = useCallback(() => settleWhere(() => true), [settleWhere]);
 
+  // Real-money results land on the server; pull fresh entries/wallet when the slate updates.
+  const signedInId = session?.userId;
+  useEffect(() => {
+    if (REAL_MONEY && signedInId) refreshAccount();
+  }, [adminData.version, signedInId, refreshAccount]);
+
   const deposit = useCallback((n: number) => {
+    if (REAL_MONEY) return;
     setState((s) => ({ ...s, balance: Math.round((s.balance + n) * 100) / 100 }));
     setToast(`Added $${n} in demo credits`);
   }, []);
 
   const resetAccount = useCallback(() => {
+    if (REAL_MONEY) return;
     setState((s) => ({ ...s, balance: STARTING_BALANCE, entries: [], picks: [] }));
     setToast('Account reset');
   }, []);
@@ -276,8 +392,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     now,
     board,
     byId,
-    balance: state.balance,
-    entries: state.entries,
+    balance,
+    entries: REAL_MONEY ? rmEntries : state.entries,
     picks: state.picks,
     playType: effectivePlayType,
     amount: state.amount,
@@ -288,6 +404,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setPlayType,
     setAmount,
     submit,
+    submitting,
+    realMoney: REAL_MONEY,
+    session,
+    profile,
+    accountLoaded,
+    wallet,
+    refreshAccount,
+    signOut,
     settle,
     settleAll,
     deposit,

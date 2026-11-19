@@ -2,6 +2,7 @@ import { useCallback, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useStore } from '../store';
 import { SPORTS } from '../data/sports';
+import { PLAY_SPORTS } from '../lib/supabase';
 import type { SportId } from '../types';
 import { ProjectionCard } from '../components/ProjectionCard';
 import { Slip } from '../components/Slip';
@@ -103,7 +104,7 @@ export function Board() {
                 <span className="cnt">{specialCount}</span>
               </button>
             )}
-            {SPORTS.map((s) => (
+            {PLAY_SPORTS.map((s) => (
               <button
                 key={s.id}
                 type="button"

@@ -1,11 +1,14 @@
 import { Link } from 'react-router-dom';
 import { FLEX_TABLE, POWER_TABLE } from '../lib/payouts';
+import { REAL_MONEY } from '../lib/supabase';
 import { Icon } from '../components/Icon';
 
 const STEPS = [
   { t: 'Pick 2–6 players', d: 'Every player has a projected stat line, like 24.5 points. Mix sports if you like. Lineups need players from at least two teams.' },
   { t: 'Call More or Less', d: 'Decide whether each player beats the line or falls short. Lines end in .5, so there are no ties.' },
-  { t: 'Choose Power or Flex', d: 'Power pays the most, but every pick has to hit. Flex still pays out when you miss one (or two on 5 and 6 picks).' },
+  REAL_MONEY
+    ? { t: 'Set your stake and place it', d: 'Every pick has to hit. Each pick locks when its game starts, and your entry settles automatically when every game is final. If a player lands exactly on the line or sits out, that pick drops out and the entry pays on the rest; if fewer than two remain, your stake is refunded.' }
+    : { t: 'Choose Power or Flex', d: 'Power pays the most, but every pick has to hit. Flex still pays out when you miss one (or two on 5 and 6 picks).' },
 ];
 
 export function HowToPlay() {
@@ -44,6 +47,7 @@ export function HowToPlay() {
             ))}
           </dl>
         </section>
+        {!REAL_MONEY && (
         <section className="paycard">
           <header>
             <h3>Flex</h3>
@@ -66,10 +70,13 @@ export function HowToPlay() {
             ))}
           </dl>
         </section>
+        )}
       </div>
 
       <p className="fine left">
-        PicksArena is a demo. Players, teams and lines are fictional and generated. Balances are play-money credits.
+        {REAL_MONEY
+          ? 'Real money. You must be of legal age and located in an eligible state. Play responsibly.'
+          : 'PicksArena is a demo. Players, teams and lines are fictional and generated. Balances are play-money credits.'}
       </p>
       <Link to="/board" className="cta inline">
         <span>Go to the board</span>

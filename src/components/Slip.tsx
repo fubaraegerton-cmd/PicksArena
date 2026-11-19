@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
 import { MAX_PICKS, MIN_ENTRY, MAX_ENTRY, flexAvailable, maxMultiplier, payoutTiers, validateLineup } from '../lib/payouts';
 import { money } from '../lib/format';
@@ -11,8 +12,9 @@ const QUICK = [5, 10, 25, 50];
 export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
   const {
     picks, byId, playType, amount, balance, now,
-    togglePick, removePick, clearPicks, setPlayType, setAmount, submit,
+    togglePick, removePick, clearPicks, setPlayType, setAmount, submit, submitting, realMoney, session,
   } = useStore();
+  const navigate = useNavigate();
 
   const n = picks.length;
   const validation = useMemo(
@@ -96,6 +98,10 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
         })}
       </ul>
 
+      {realMoney ? (
+        <p className="play-hint">Power Play: every pick must hit. If a player lands exactly on the line, that pick drops out and the entry pays on the rest.</p>
+      ) : (
+      <>
       <div className="seg seg-play" role="radiogroup" aria-label="Play type">
         <button
           type="button"
@@ -123,6 +129,8 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
           : 'Still pays if you miss one' + (n >= 5 ? ' or two.' : '.')}
         {!flexAvailable(n) && ' Add a 3rd pick to unlock Flex.'}
       </p>
+      </>
+      )}
 
       <div className="perf" aria-hidden />
 
@@ -184,7 +192,7 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
         <span className="payout-num">{mult && safeAmount ? money(safeAmount * mult) : '—'}</span>
       </div>
 
-      {!validation.ok && (
+      {!validation.ok && !(realMoney && !session) && (
         <p className="ticket-error" role="alert">
           {validation.errors[0]}
         </p>
@@ -193,18 +201,24 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
       <button
         type="button"
         className="cta"
-        disabled={!validation.ok}
-        onClick={() => {
-          if (submit()) {
+        disabled={submitting || (realMoney && !session ? false : !validation.ok)}
+        onClick={async () => {
+          const r = await submit();
+          if (r === 'ok') {
             haptic([12, 40, 18]);
             onSubmitted?.();
+          } else if (r === 'signin' || r === 'profile') {
+            onSubmitted?.();
+            navigate('/login?next=/board');
           }
         }}
       >
-        <span>Place entry</span>
+        <span>{submitting ? 'Placing entry…' : realMoney && !session ? 'Sign in to place entry' : 'Place entry'}</span>
         <span className="cta-amt">{money(safeAmount)}</span>
       </button>
-      <p className="fine">Play-money credits only. No real money.</p>
+      <p className="fine">
+        {realMoney ? 'Real money. Play responsibly. Must be of legal age in an eligible state.' : 'Play-money credits only. No real money.'}
+      </p>
     </div>
   );
 }

@@ -1,0 +1,168 @@
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import type { Direction, Entry, EntryPick, PickResult, Projection } from '../types';
+import { SPORTS } from '../data/sports';
+
+const URL = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const KEY = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY as string | undefined;
+
+/** Real-money mode is on when the build has Supabase settings. Otherwise the app runs as the play-money demo. */
+export const REAL_MONEY = !!(URL && KEY);
+
+/** Sports offered: real money is NBA and NFL only. */
+export const PLAY_SPORTS = REAL_MONEY ? SPORTS.filter((s) => s.id === 'NBA' || s.id === 'NFL') : SPORTS;
+
+export const supabase: SupabaseClient | null = REAL_MONEY
+  ? createClient(URL!, KEY!, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } })
+  : null;
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code?: string,
+  ) {
+    super(message);
+  }
+}
+
+async function token(): Promise<string | null> {
+  const { data } = (await supabase?.auth.getSession()) ?? { data: { session: null } };
+  return data.session?.access_token ?? null;
+}
+
+async function call<T>(path: string, init?: RequestInit): Promise<T> {
+  const t = await token();
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(t ? { authorization: `Bearer ${t}` } : {}), ...(init?.headers ?? {}) },
+    });
+  } catch {
+    throw new ApiError('Can’t reach the server. Check your connection.', 0);
+  }
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(body.error ?? `Request failed (${res.status})`, res.status, body.code);
+  return body as T;
+}
+
+export interface Profile {
+  id: string;
+  dob: string | null;
+  state: string | null;
+  kyc_status: string;
+  self_exclusion_until: string | null;
+}
+
+export const getProfile = () => call<{ profile: Profile | null; minimumAge: number }>('/api/rm/profile');
+export const saveProfile = (dob: string, state: string) =>
+  call<{ profile: Profile }>('/api/rm/profile', { method: 'POST', body: JSON.stringify({ dob, state }) });
+
+/** Projection ids on the board are "adm-<uuid>"; the server wants the bare uuid. */
+export const dbId = (projectionId: string) => projectionId.replace(/^adm-/, '');
+
+export const placeEntry = (picks: { projectionId: string; direction: Direction }[], stakeCents: number, idempotencyKey: string) =>
+  call<{ entry: { id: string } }>('/api/rm/entries', {
+    method: 'POST',
+    body: JSON.stringify({
+      picks: picks.map((p) => ({ projection_id: dbId(p.projectionId), direction: p.direction })),
+      stake_cents: stakeCents,
+      idempotency_key: idempotencyKey,
+    }),
+  });
+
+export interface Wallet {
+  available: number; // dollars
+  held: number;
+  inPlay: number;
+}
+
+export async function fetchWallet(): Promise<Wallet> {
+  const { data, error } = await supabase!.from('wallets').select('available_cents, held_cents, in_play_cents').maybeSingle();
+  if (error) throw new Error(error.message);
+  return {
+    available: Number(data?.available_cents ?? 0) / 100,
+    held: Number(data?.held_cents ?? 0) / 100,
+    inPlay: Number(data?.in_play_cents ?? 0) / 100,
+  };
+}
+
+interface EntryRow {
+  id: string;
+  created_at: string;
+  stake_cents: number;
+  pick_count: number;
+  potential_payout_cents: number;
+  status: 'open' | 'won' | 'lost' | 'refunded';
+  payout_cents: number;
+  entry_picks: {
+    direction: Direction;
+    line: number;
+    result: 'pending' | 'hit' | 'miss' | 'push' | 'void';
+    final_value: number | null;
+    projections: {
+      id: string;
+      player_id: string;
+      player_name: string;
+      team: string;
+      position: string;
+      jersey: number | null;
+      stat_type: string;
+      games: {
+        id: string;
+        sport: 'NBA' | 'NFL';
+        home_team: string;
+        away_team: string;
+        home_color: string | null;
+        away_color: string | null;
+        home_name: string | null;
+        away_name: string | null;
+        starts_at: string;
+      };
+    };
+  }[];
+}
+
+/** The signed-in player's entries (RLS limits rows to their own), mapped to the app's Entry shape. */
+export async function fetchEntries(): Promise<Entry[]> {
+  const { data, error } = await supabase!
+    .from('entries')
+    .select(
+      'id, created_at, stake_cents, pick_count, potential_payout_cents, status, payout_cents, entry_picks(direction, line, result, final_value, projections(id, player_id, player_name, team, position, jersey, stat_type, games(id, sport, home_team, away_team, home_color, away_color, home_name, away_name, starts_at)))',
+    )
+    .order('created_at', { ascending: false })
+    .limit(100);
+  if (error) throw new Error(error.message);
+  return (data as unknown as EntryRow[]).map((e) => ({
+    id: e.id,
+    createdAt: Date.parse(e.created_at),
+    playType: 'power',
+    amount: Number(e.stake_cents) / 100,
+    status: e.status,
+    payout: Number(e.payout_cents) / 100,
+    potentialPayout: Number(e.potential_payout_cents) / 100,
+    picks: e.entry_picks.map((p): EntryPick => {
+      const pr = p.projections;
+      const g = pr.games;
+      const home = { abbr: g.home_team, name: g.home_name ?? g.home_team, color: g.home_color ?? '#5b6573' };
+      const away = { abbr: g.away_team, name: g.away_name ?? g.away_team, color: g.away_color ?? '#5b6573' };
+      const isHome = pr.team === g.home_team;
+      const projection: Projection = {
+        id: `adm-${pr.id}`,
+        source: 'admin',
+        player: { id: pr.player_id, name: pr.player_name, position: pr.position, number: pr.jersey ?? undefined, team: isHome ? home : away, sport: g.sport },
+        game: { id: `adm-${g.id}`, sport: g.sport, home, away, startsAt: Date.parse(g.starts_at) },
+        opponent: isHome ? away : home,
+        statType: pr.stat_type,
+        line: Number(p.line),
+        moreShare: 50,
+      };
+      return {
+        projection,
+        direction: p.direction,
+        result: p.result as PickResult,
+        actual: p.final_value === null ? undefined : Number(p.final_value),
+      };
+    }),
+  }));
+}

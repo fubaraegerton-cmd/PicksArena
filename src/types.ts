@@ -18,7 +18,8 @@ export interface Player {
   id: string;
   name: string;
   position: string;
-  number: number;
+  /** Jersey number, when known */
+  number?: number;
   team: Team;
   sport: SportId;
 }
@@ -51,7 +52,8 @@ export interface Pick {
 
 export type PlayType = 'power' | 'flex';
 
-export type PickResult = 'hit' | 'miss' | 'pending';
+/** push/void only occur in real-money settlement (exact-line pushes, scratched players). */
+export type PickResult = 'hit' | 'miss' | 'pending' | 'push' | 'void';
 
 export interface EntryPick {
   projection: Projection;
@@ -66,7 +68,7 @@ export interface Entry {
   playType: PlayType;
   amount: number;
   picks: EntryPick[];
-  status: 'open' | 'won' | 'lost';
+  status: 'open' | 'won' | 'lost' | 'refunded';
   payout: number;
   potentialPayout: number;
 }

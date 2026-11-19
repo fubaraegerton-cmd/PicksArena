@@ -5,7 +5,7 @@ import { Link } from 'react-router-dom';
 import { Icon } from '../components/Icon';
 
 export function Account() {
-  const { balance, entries, deposit, resetAccount } = useStore();
+  const { balance, entries, deposit, resetAccount, realMoney, session, profile, wallet, signOut } = useStore();
   const [theme, setTheme] = useTheme();
   const install = useInstallPrompt();
   const open = entries.filter((e) => e.status === 'open');
@@ -18,6 +18,34 @@ export function Account() {
         <h1>Account</h1>
       </header>
 
+      {realMoney && !session && (
+        <section className="group">
+          <Link to="/login?next=/account" className="row-card">
+            <Icon name="user" size={18} />
+            <div>
+              <strong>Sign in to see your wallet</strong>
+              <p>Or create an account to play for real money.</p>
+            </div>
+            <Icon name="arrow" size={18} />
+          </Link>
+        </section>
+      )}
+
+      {realMoney && session && (
+      <section className="wallet-card">
+        <span className="eyebrow">Available</span>
+        <strong className="wallet-num">{money(wallet?.available ?? 0)}</strong>
+        <span className="wallet-sub">
+          {money(wallet?.inPlay ?? 0)} in {open.length} open entr{open.length === 1 ? 'y' : 'ies'}
+          {wallet?.held ? `, ${money(wallet.held)} held for withdrawal` : ''}
+        </span>
+        <p className="wallet-fine">
+          Deposits and withdrawals open once the payment provider is connected. Every movement of your money is recorded on your account’s ledger.
+        </p>
+      </section>
+      )}
+
+      {!realMoney && (
       <section className="wallet-card">
         <span className="eyebrow">Balance</span>
         <strong className="wallet-num">{money(balance)}</strong>
@@ -31,6 +59,26 @@ export function Account() {
         </div>
         <p className="wallet-fine">Play-money credits for the demo.</p>
       </section>
+      )}
+
+      {realMoney && session && (
+        <section className="group">
+          <h2 className="group-title">Your account</h2>
+          <div className="row-card">
+            <Icon name="user" size={18} />
+            <div>
+              <strong>{session.email}</strong>
+              <p>
+                {profile?.state ? `Playing from ${profile.state}. ` : ''}
+                Identity check: {profile?.kyc_status === 'approved' ? 'verified' : 'needed before your first withdrawal'}.
+              </p>
+            </div>
+            <button type="button" className="pill-btn" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
+        </section>
+      )}
 
       <section className="group">
         <h2 className="group-title">Appearance</h2>
@@ -82,6 +130,7 @@ export function Account() {
         </Link>
       </section>
 
+      {!realMoney && (
       <section className="group">
         <h2 className="group-title">Danger zone</h2>
         <button
@@ -95,6 +144,7 @@ export function Account() {
           <span>Reset account</span>
         </button>
       </section>
+      )}
     </div>
   );
 }

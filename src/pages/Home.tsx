@@ -2,6 +2,7 @@ import { useMemo, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store';
 import { SPORTS } from '../data/sports';
+import { PLAY_SPORTS, REAL_MONEY } from '../lib/supabase';
 import type { Direction, Projection } from '../types';
 import { ProjectionCard, Jersey } from '../components/ProjectionCard';
 import { Icon } from '../components/Icon';
@@ -119,7 +120,7 @@ function StartingSoon({ board, now }: { board: Projection[]; now: number }) {
 }
 
 function SportTable({ board, now }: { board: Projection[]; now: number }) {
-  const rows = SPORTS.map((s) => {
+  const rows = PLAY_SPORTS.map((s) => {
     const lines = board.filter((p) => p.player.sport === s.id && p.game.startsAt > now);
     const games = new Set(lines.map((p) => p.game.id));
     const next = lines.reduce((m, p) => Math.min(m, p.game.startsAt), Infinity);
@@ -191,14 +192,34 @@ function PayoutLadder() {
           </li>
         ))}
       </ul>
+      {!REAL_MONEY && (
       <p className="ladder-flex">
         Flex Play pays less but forgives a miss: a 5-pick Flex pays {FLEX_TABLE[5][5]}× for 5 of 5 and {FLEX_TABLE[5][4]}× for 4 of 5.
       </p>
+      )}
+      {REAL_MONEY && <p className="ladder-flex">If a player lands exactly on the line, that pick drops out and your entry pays on the picks that remain.</p>}
     </figure>
   );
 }
 
-const FAQ = [
+const FAQ = REAL_MONEY ? [
+  {
+    q: 'Who can play?',
+    a: 'Adults of legal age who live in an eligible state. We check your date of birth when you sign up and again before every entry, and we verify your identity before your first withdrawal.',
+  },
+  {
+    q: 'What does More or Less mean?',
+    a: 'Each player has a line, like 24.5 points. Pick More if you think they’ll beat it, or Less if they’ll fall short. If a player lands exactly on a whole-number line, that pick drops out and the entry pays on the rest.',
+  },
+  {
+    q: 'When does my entry lock and settle?',
+    a: 'Each pick locks when that player’s game starts. Your entry settles automatically once every game on it is final, and winnings go straight to your wallet.',
+  },
+  {
+    q: 'What if a game is cancelled or a player sits out?',
+    a: 'Those picks are voided and your entry is re-priced on the picks that remain. If fewer than two remain, your stake is refunded in full.',
+  },
+] : [
   {
     q: 'Is real money involved?',
     a: 'No. Everyone starts with $100 in play credits, and you can top up from your account at any time. Nothing can be bought, cashed out or withdrawn.',
@@ -333,7 +354,9 @@ export function Home() {
 
       <footer className="home-foot">
         <p>
-          PicksArena is a free demo. Players, teams and lines are fictional, and all balances are play credits.
+          {REAL_MONEY
+            ? 'Real-money play for adults of legal age in eligible states. Play responsibly.'
+            : 'PicksArena is a free demo. Players, teams and lines are fictional, and all balances are play credits.'}
         </p>
         <nav aria-label="Footer">
           <Link to="/board">Board</Link>

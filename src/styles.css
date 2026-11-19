@@ -1595,3 +1595,10 @@ a.row-card { text-decoration: none; color: inherit; }
   .how { grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr); align-items: start; }
   .ticket-bar.home-bar { display: flex; }
 }
+.signin-pill { padding: 0 16px; height: 36px; }
+li.push .ep-res,
+li.void .ep-res { width: auto; padding: 0 6px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line-strong); }
+.ep-note { font-size: 11px; font-weight: 700; color: var(--muted); }
+.hitstrip .push,
+.hitstrip .void { background: var(--line-strong); }
+.stamp.refunded { color: var(--muted); }

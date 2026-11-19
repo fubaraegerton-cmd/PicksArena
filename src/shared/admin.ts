@@ -75,15 +75,20 @@ function teamError(t: AdminTeam | undefined, label: string): string | null {
   return null;
 }
 
-export function lineError(line: unknown): string | null {
+/**
+ * Lines must be in half-point steps. Whole numbers (exact-line pushes) are allowed only when
+ * settlement supports pushes (real money); the demo requires .5 lines so there are no ties.
+ */
+export function lineError(line: unknown, allowWhole = false): string | null {
   if (typeof line !== 'number' || !Number.isFinite(line)) return 'Line must be a number.';
   if (line < 0 || line > 999.5) return 'Line must be between 0 and 999.5.';
+  if (allowWhole) return Math.abs(line * 2 - Math.round(line * 2)) > 1e-9 ? 'Line must be a whole number or end in .5.' : null;
   if (Math.abs((line % 1) - 0.5) > 1e-9) return 'Line must end in .5 (e.g. 24.5) so there are no ties.';
   return null;
 }
 
 /** Validates an action against the current data. Returns an error message or null. */
-export function validateAction(a: AdminAction, data: AdminData): string | null {
+export function validateAction(a: AdminAction, data: AdminData, opts: { allowWholeLines?: boolean } = {}): string | null {
   switch (a.action) {
     case 'createGame': {
       const g = a.game;
@@ -120,13 +125,13 @@ export function validateAction(a: AdminAction, data: AdminData): string | null {
           x.statType.trim().toLowerCase() === p.statType.trim().toLowerCase(),
       );
       if (dupe) return 'That player already has a pick for this stat in this game.';
-      return lineError(p.line);
+      return lineError(p.line, opts.allowWholeLines);
     }
     case 'updatePick': {
       const pick = data.picks.find((p) => p.id === a.id);
       if (!pick) return 'Pick not found.';
       if (a.patch.line !== undefined) {
-        const le = lineError(a.patch.line);
+        const le = lineError(a.patch.line, opts.allowWholeLines);
         if (le) return le;
       }
       if (a.patch.actual !== undefined && a.patch.actual !== null) {

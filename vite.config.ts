@@ -1,7 +1,8 @@
-import { defineConfig, type Plugin, type ViteDevServer } from 'vite';
+import { defineConfig, loadEnv, type Plugin, type ViteDevServer } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { existsSync } from 'node:fs';
 
 /**
  * Serves the Vercel functions in /api during `npm run dev`, so the admin dashboard works locally.
@@ -14,8 +15,10 @@ function devApi(): Plugin {
     configureServer(server: ViteDevServer) {
       server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next) => {
         const url = new URL(req.url ?? '/', 'http://localhost');
-        const route = { '/api/board': '/api/board.ts', '/api/admin': '/api/admin.ts' }[url.pathname];
-        if (!route) return next();
+        // Same routing as Vercel: /api/a/b -> api/a/b.ts
+        if (!/^\/api\/[a-z0-9/_-]+$/i.test(url.pathname)) return next();
+        const route = `${url.pathname}.ts`;
+        if (!existsSync(`${process.cwd()}${route}`)) return next();
         try {
           const mod = await server.ssrLoadModule(route);
           const handler = mod[req.method ?? 'GET'];
@@ -43,7 +46,10 @@ function devApi(): Plugin {
   };
 }
 
-export default defineConfig({
+export default defineConfig(({ mode }) => {
+  // Make .env / .env.local values (e.g. SUPABASE_SECRET_KEY) visible to the dev API handlers.
+  for (const [k, v] of Object.entries(loadEnv(mode, process.cwd(), ''))) process.env[k] ??= v;
+  return {
   plugins: [
     react(),
     devApi(),
@@ -75,4 +81,5 @@ export default defineConfig({
       },
     }),
   ],
+};
 });

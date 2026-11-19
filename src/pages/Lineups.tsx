@@ -23,7 +23,7 @@ function EntryTicket({ entry, onSettle, ready }: { entry: Entry; onSettle: () =>
             {new Date(entry.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
           </p>
         </div>
-        {!open && <span className={`stamp ${entry.status}`}>{entry.status === 'won' ? 'Won' : 'Lost'}</span>}
+        {!open && <span className={`stamp ${entry.status}`}>{entry.status === 'won' ? 'Won' : entry.status === 'refunded' ? 'Refunded' : 'Lost'}</span>}
         {open && <span className="live-dot">Open</span>}
       </header>
 
@@ -72,7 +72,13 @@ function EntryTicket({ entry, onSettle, ready }: { entry: Entry; onSettle: () =>
               {p.actual !== undefined && <span className="final">Final {p.actual}</span>}
             </div>
             <span className="ep-res" aria-label={p.result}>
-              {p.result === 'hit' ? <Icon name="check" size={16} strokeWidth={3} /> : p.result === 'miss' ? <Icon name="close" size={14} strokeWidth={3} /> : null}
+              {p.result === 'hit' ? (
+                <Icon name="check" size={16} strokeWidth={3} />
+              ) : p.result === 'miss' ? (
+                <Icon name="close" size={14} strokeWidth={3} />
+              ) : p.result === 'push' || p.result === 'void' ? (
+                <span className="ep-note">{p.result === 'push' ? 'Push' : 'Void'}</span>
+              ) : null}
             </span>
           </li>
         ))}

@@ -5,6 +5,55 @@ import { SPORTS, sportById } from '../data/sports';
 import type { AdminAction, AdminData, AdminGame, AdminPick, AdminSport, AdminTeam } from '../shared/admin';
 import { EMPTY_DATA, lineError } from '../shared/admin';
 import { AdminError, adminDo, adminLogin, rememberPassword, savedPassword } from '../lib/adminApi';
+import { REAL_MONEY, supabase } from '../lib/supabase';
+
+/** In real-money mode the dashboard authenticates with the signed-in operator's session, checked server-side. */
+async function operatorToken(): Promise<string | null> {
+  if (!supabase) return null;
+  return (await supabase.auth.getSession()).data.session?.access_token ?? null;
+}
+
+function CreditFunds({ run }: { run: (body: Record<string, unknown>) => Promise<boolean> }) {
+  const [email, setEmail] = useState('');
+  const [amount, setAmount] = useState('');
+  const [reason, setReason] = useState('');
+  return (
+    <form
+      className="adm-card adm-form"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        const ok = await run({ action: 'creditFunds', email, amountCents: Math.round(Number(amount) * 100), reason });
+        if (ok) {
+          setAmount('');
+          setReason('');
+        }
+      }}
+    >
+      <header className="adm-card-head">
+        <h2>Adjust a balance</h2>
+        <span className="muted">Recorded on the ledger</span>
+      </header>
+      <p className="muted small">For test funds until deposits open, and for corrections. Use a negative amount to debit.</p>
+      <div className="field-row">
+        <label className="field grow">
+          <span>Player email</span>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
+        </label>
+        <label className="field w-md">
+          <span>Amount $</span>
+          <input type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} required inputMode="decimal" />
+        </label>
+      </div>
+      <label className="field">
+        <span>Reason</span>
+        <input value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3} maxLength={140} placeholder="e.g. Test funds for QA" />
+      </label>
+      <button type="submit" className="cta">
+        <span>Apply adjustment</span>
+      </button>
+    </form>
+  );
+}
 import { gameTime } from '../lib/format';
 import { Icon } from '../components/Icon';
 
@@ -327,7 +376,7 @@ function GameForm({ run, busy }: { run: (a: AdminAction) => Promise<boolean>; bu
       <div className="field" role="group" aria-labelledby="adm-sport-label">
         <span id="adm-sport-label">Sport</span>
         <div className="seg seg-sports">
-          {SPORTS.map((s) => (
+          {SPORTS.filter((s) => !REAL_MONEY || s.id === 'NBA' || s.id === 'NFL').map((s) => (
             <button
               key={s.id}
               type="button"
@@ -470,7 +519,7 @@ function PickForm({ data, now, run, busy, presetGame }: { data: AdminData; now: 
   const sportCfg = game ? sportById(game.sport as never) : undefined;
   const stats = useMemo(() => [...new Set(Object.values(sportCfg?.stats ?? {}).flat().map((s) => s.stat))], [sportCfg]);
   const lineNum = Number(line);
-  const lineProblem = line === '' ? null : lineError(lineNum);
+  const lineProblem = line === '' ? null : lineError(lineNum, REAL_MONEY);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -715,11 +764,12 @@ function PicksTab({ data, now, run, busy, gameFilter, setGameFilter }: { data: A
 /* ------------------------------------------------------------------ */
 
 export function Admin() {
-  const { now, setAdminData, notify } = useStore();
-  const [pass, setPass] = useState<string | null>(savedPassword);
+  const { now, setAdminData, notify, session } = useStore();
+  const [pass, setPass] = useState<string | null>(REAL_MONEY ? null : savedPassword);
   const [data, setData] = useState<AdminData>(EMPTY_DATA);
   const [storage, setStorage] = useState<string>('');
-  const [checking, setChecking] = useState(!!savedPassword());
+  const [checking, setChecking] = useState(REAL_MONEY || !!savedPassword());
+  const [operatorError, setOperatorError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
@@ -744,8 +794,40 @@ export function Admin() {
     [setAdminData],
   );
 
+  // Real money: the signed-in account must be an operator (checked on the server).
+  useEffect(() => {
+    if (!REAL_MONEY) return;
+    let alive = true;
+    (async () => {
+      const t = await operatorToken();
+      if (!t) {
+        if (alive) {
+          setPass(null);
+          setChecking(false);
+        }
+        return;
+      }
+      try {
+        const r = await adminLogin(t);
+        if (!alive) return;
+        accept(r.data);
+        setStorage(r.storage);
+        setPass('operator');
+        setOperatorError(null);
+      } catch (e) {
+        if (alive) setOperatorError((e as Error).message);
+      } finally {
+        if (alive) setChecking(false);
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+  }, [accept, session]);
+
   // Re-validate a remembered password on load
   useEffect(() => {
+    if (REAL_MONEY) return;
     const p = savedPassword();
     if (!p) return;
     adminLogin(p)
@@ -766,14 +848,15 @@ export function Admin() {
       setBusy(true);
       setError(null);
       try {
-        const r = await adminDo(pass, action, data.version);
+        const credential = REAL_MONEY ? (await operatorToken()) ?? '' : pass;
+        const r = await adminDo(credential, action, data.version);
         accept(r.data);
         notify('Saved');
         return true;
       } catch (e) {
         const err = e as AdminError;
         if (err.data) accept(err.data);
-        if (err.status === 401) {
+        if (err.status === 401 && !REAL_MONEY) {
           rememberPassword(null);
           setPass(null);
         }
@@ -787,6 +870,31 @@ export function Admin() {
   );
 
   if (checking) return <div className="page"><p className="muted">Checking admin session…</p></div>;
+
+  if (REAL_MONEY && !pass)
+    return (
+      <div className="page narrow">
+        <header className="page-head">
+          <h1>Admin</h1>
+        </header>
+        <div className="adm-card adm-login">
+          <div className="adm-login-ico">
+            <Icon name="shield" size={22} />
+          </div>
+          {session ? (
+            <p>{operatorError ?? 'This account doesn’t have operator access.'} Signed in as <strong>{session.email}</strong>.</p>
+          ) : (
+            <p>Sign in with your operator account to open the dashboard.</p>
+          )}
+          {!session && (
+            <Link to="/login?next=/admin" className="cta">
+              <span>Sign in</span>
+              <Icon name="arrow" size={18} />
+            </Link>
+          )}
+        </div>
+      </div>
+    );
 
   if (!pass)
     return (
@@ -812,6 +920,7 @@ export function Admin() {
           <Link to="/board?sport=SPECIALS" className="ghost-sm">
             View as player
           </Link>
+          {!REAL_MONEY && (
           <button
             type="button"
             className="ghost-sm"
@@ -822,6 +931,7 @@ export function Admin() {
           >
             <Icon name="logout" size={15} /> Sign out
           </button>
+          )}
         </div>
       </header>
 
@@ -847,7 +957,15 @@ export function Admin() {
         </p>
       )}
 
+      {storage === 'supabase' && (
+        <p className="adm-banner">Real money: games and lines are live in the database. Posting a final stat settles players’ entries and pays out from the ledger. Results can’t be changed once posted.</p>
+      )}
       {tab === 'overview' && <Overview data={data} now={now} go={go} />}
+      {tab === 'overview' && REAL_MONEY && (
+        <div style={{ marginTop: 14 }}>
+          <CreditFunds run={(body) => run(body as unknown as AdminAction)} />
+        </div>
+      )}
       {tab === 'games' && <GamesTab data={data} now={now} run={run} busy={busy} go={go} />}
       {tab === 'picks' && (
         <PicksTab

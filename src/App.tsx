@@ -10,6 +10,7 @@ import { Lineups } from './pages/Lineups';
 import { HowToPlay } from './pages/HowToPlay';
 import { Account } from './pages/Account';
 import { Admin } from './pages/Admin';
+import { Login } from './pages/Login';
 
 const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
   { to: '/', label: 'Home', icon: 'home', end: true },
@@ -48,7 +49,7 @@ function OpenBadge() {
 
 /** Desktop / tablet-landscape sidebar */
 function Sidebar() {
-  const { balance } = useStore();
+  const { balance, realMoney, session } = useStore();
   return (
     <aside className="sidebar">
       <Brand />
@@ -61,29 +62,43 @@ function Sidebar() {
           </NavLink>
         ))}
       </nav>
-      <Link to="/account" className="side-wallet">
-        <span className="eyebrow">Balance</span>
-        <strong>{money(balance)}</strong>
-        <span className="add">
-          <Icon name="plus" size={14} strokeWidth={3} /> Add credits
-        </span>
-      </Link>
+      {realMoney && !session ? (
+        <Link to="/login" className="side-wallet">
+          <span className="eyebrow">Real-money play</span>
+          <strong>Sign in</strong>
+          <span className="add">or create an account</span>
+        </Link>
+      ) : (
+        <Link to="/account" className="side-wallet">
+          <span className="eyebrow">Balance</span>
+          <strong>{money(balance)}</strong>
+          <span className="add">
+            <Icon name="plus" size={14} strokeWidth={3} /> {realMoney ? 'Wallet' : 'Add credits'}
+          </span>
+        </Link>
+      )}
     </aside>
   );
 }
 
 /** Mobile top app bar */
 function AppBar() {
-  const { balance } = useStore();
+  const { balance, realMoney, session } = useStore();
   return (
     <header className="appbar">
       <Brand />
+      {realMoney && !session ? (
+        <Link to="/login" className="balance-pill signin-pill">
+          <span>Sign in</span>
+        </Link>
+      ) : (
       <Link to="/account" className="balance-pill" aria-label={`Balance ${money(balance)}, open account`}>
         <span>{money(balance)}</span>
         <span className="plus">
           <Icon name="plus" size={12} strokeWidth={3.5} />
         </span>
       </Link>
+      )}
     </header>
   );
 }
@@ -126,6 +141,7 @@ export default function App() {
           <Route path="/how-to-play" element={<HowToPlay />} />
           <Route path="/account" element={<Account />} />
           <Route path="/admin" element={<Admin />} />
+          <Route path="/login" element={<Login />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>
