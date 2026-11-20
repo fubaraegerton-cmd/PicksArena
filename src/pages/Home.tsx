@@ -363,6 +363,8 @@ export function Home() {
           <Link to="/lineups">Lineups</Link>
           <Link to="/how-to-play">Rules</Link>
           <Link to="/account">Account</Link>
+          {REAL_MONEY && <Link to="/responsible-gaming">Responsible gaming</Link>}
+          {REAL_MONEY && <a href="tel:18004262537">Help: 1-800-GAMBLER</a>}
         </nav>
       </footer>
     </div>

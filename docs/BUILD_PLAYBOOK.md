@@ -29,7 +29,7 @@ ones being right.
 | 7 | Connect the app to Supabase | Real accounts, server-placed entries, live wallet |
 | 8 | Compliance gates (phase 3) | Geofence, age by state, identity checks, one account per person |
 | 9 | Payments (phase 4) | Deposits/withdrawals behind a processor adapter, signed webhooks, reconciliation |
-| 10 | Responsible gaming + audit (phase 5) | Limits, self-exclusion, audit log, rate limits *(next)* |
+| 10 | Responsible gaming + audit (phase 5) | Limits, breaks, self-exclusion, spend summary, reminders, audit log, rate limits |
 
 The single most important lesson: **build the money core and its tests before any payment or
 UI work for real money.** Everything else is replaceable; ledger mistakes are not.
@@ -215,6 +215,45 @@ payout.paid | payout.failed`, point its webhook at `/api/pay/webhook?provider=<n
 rather than being auto-failed — a processor can confirm late, and failing first would leave a
 player charged but not credited. Reconciliation surfaces any late settlement.
 
+## 10. Responsible gaming, audit log, rate limiting (phase 5)
+
+Migrations `…_responsible_gaming_audit.sql` and `…_limit_usage_checkout_window.sql`, server
+`server/rg.ts`, UI `src/pages/ResponsibleGaming.tsx`, `src/components/RealityCheck.tsx`, admin **Audit log** tab.
+
+1. **Limits** (`player_limits`, append-only history): deposit, stake and loss limits for rolling
+   24 hours, 7 days and 30 days. `set_limit` makes a stricter limit effective now and a looser one
+   (or removal) effective in 24 hours; the limit in force is the newest request whose time has come.
+   `enforce_limits` runs inside `start_deposit` and `place_entry`, so they're enforced in the database.
+   - deposit usage = completed + charged-back deposits + checkouts opened in the last hour
+   - stake usage = stakes placed; loss usage = stakes placed − everything paid back (wins, refunds)
+2. **Breaks and self-exclusion** (`player_exclusions`, append-only): cool-off 1/7/30 days,
+   self-exclusion 6 months/1 year/5 years/permanent (`'infinity'`). Deposits and entries stop at once;
+   withdrawals stay open. A trigger on `profiles.self_exclusion_until` refuses any change that would
+   shorten an active exclusion — including by an operator.
+3. **Spend summary** (`spend_summary`): deposits, withdrawals, staked and won back for 24h/7d/30d/all time.
+4. **Session reminders**: every N minutes (player-chosen, default 60) a check-in shows time played and
+   net result since the session started (snapshot of the spend summary at session start).
+5. **One-tap path**: Responsible gaming page linked from the ticket, Account, the home footer and the
+   app-wide break banner; 1-800-GAMBLER help link.
+6. **Audit log** (`audit_log`, append-only incl. TRUNCATE): database triggers record ledger
+   transactions (deferred to commit so amounts are known), payment status changes, KYC decisions,
+   limits, exclusions, account flag/age/state changes, state switches, games, lines and results, and
+   location denials (every location check is also in `geo_checks`). The server adds an explicit
+   `operator.<action>` row with the operator's identity for every dashboard action, and
+   `exclusion.requested` for player requests. Operators browse and filter it in the Audit log tab.
+7. **Rate limiting** (`hit_rate_limit`, fixed windows in an unlogged table): entries 10/min,
+   deposits 5/10 min, withdrawals 5/hour, identity checks 5/hour, profile 10/hour, limits 30/hour,
+   sandbox checkout 10/10 min, operator actions 120/min. Returns HTTP 429 with `Retry-After`.
+   Supabase Auth applies its own limits to sign-in and sign-up.
+
+**Found in phase 5 testing:**
+- Counting open checkouts toward the deposit limit (to stop parallel checkouts exceeding it) meant an
+  abandoned checkout blocked the player for the whole 30-day window. Fixed with a one-hour checkout
+  window — as a new migration, because applied migrations are never edited.
+- A cool-off error said "self-excluded"; messages now say "on a break or self-excluded".
+- Setting a limit below what's already been used in the window blocks further play until it frees up
+  — expected behaviour, worth explaining to support staff.
+
 ---
 
 ## Pre-launch: reset the database to a clean ledger
@@ -254,6 +293,12 @@ Never do this after launch. From launch on, corrections are new ledger transacti
 | Credit only from signed webhooks with matching amount | Never trust redirects or client amounts |
 | Sandbox processor instead of guessing a real processor's API | Full path testable now; real one drops in behind the adapter |
 | Abandoned checkouts not auto-failed | Late confirmations must still credit |
+| Stricter limits now, looser after 24 hours | Industry standard; stops impulsive loosening |
+| Exclusions extend-only, enforced by trigger | A break must not be undone, even by staff |
+| Withdrawals allowed during breaks | Players must always be able to take their money out |
+| Audit via triggers + explicit operator rows | Captures every change, plus who made it |
+| Rate limits in Postgres, failing open | No extra service; a limiter outage can't lock everyone out |
+| New migration for fixes, never edit applied ones | Every environment replays the same history |
 
 ---
 
@@ -281,7 +326,10 @@ Never do this after launch. From launch on, corrections are new ledger transacti
 9. Payments: hosted checkout + signed webhooks only; exactly-once event log; closed-loop
    withdrawals with operator review; chargeback freeze/claw-back; reconciliation against the
    processor's report. Build against a sandbox processor first.
-10. Before going public: reset the pre-launch database, licensed states enabled, KYC +
+10. Responsible gaming: limits (stricter now, looser after 24h), breaks and self-exclusion that
+   can't be shortened, spend summary, session reminders, help line — all enforced in the database.
+   Audit everything append-only; rate-limit every money and account endpoint.
+11. Before going public: reset the pre-launch database, licensed states enabled, KYC +
    geolocation + payment providers live, responsible-gaming limits, audit log, custom SMTP,
    Vercel protection off.
 

@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import { SPORTS, sportById } from '../data/sports';
 import type { AdminAction, AdminData, AdminGame, AdminPick, AdminSport, AdminTeam } from '../shared/admin';
 import { EMPTY_DATA, lineError } from '../shared/admin';
-import { AdminError, adminCompliance, adminCompliancePost, adminDo, adminLogin, adminPayments, adminPaymentsPost, rememberPassword, savedPassword, type ComplianceData, type PaymentsData } from '../lib/adminApi';
+import { AdminError, adminAudit, adminCompliance, adminCompliancePost, adminDo, adminLogin, adminPayments, adminPaymentsPost, rememberPassword, savedPassword, type AuditRow, type ComplianceData, type PaymentsData } from '../lib/adminApi';
 import { REAL_MONEY, supabase } from '../lib/supabase';
 
 /** In real-money mode the dashboard authenticates with the signed-in operator's session, checked server-side. */
@@ -394,6 +394,77 @@ function PaymentsTab({ notify }: { notify: (m: string) => void }) {
   );
 }
 
+function AuditTab() {
+  const [rows, setRows] = useState<AuditRow[] | null>(null);
+  const [action, setAction] = useState('');
+  const [email, setEmail] = useState('');
+  const [err, setErr] = useState<string | null>(null);
+  const load = useCallback(async (a = '', e = '') => {
+    try {
+      setErr(null);
+      setRows((await adminAudit((await operatorToken()) ?? '', a, e)).rows);
+    } catch (x) {
+      setErr((x as Error).message);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+  return (
+    <section className="adm-card">
+      <header className="adm-card-head wrap">
+        <h2>Audit log</h2>
+        <form
+          className="adm-filters"
+          onSubmit={(e) => {
+            e.preventDefault();
+            load(action, email);
+          }}
+        >
+          <select value={action} onChange={(e) => setAction(e.target.value)} aria-label="Filter by type">
+            <option value="">Everything</option>
+            <option value="ledger.">Money movements</option>
+            <option value="payment.">Payments</option>
+            <option value="kyc.">Identity checks</option>
+            <option value="limit.">Limits</option>
+            <option value="exclusion.">Breaks and exclusions</option>
+            <option value="profile.">Account changes</option>
+            <option value="operator.">Operator actions</option>
+            <option value="geo.">Location blocks</option>
+            <option value="line.">Lines and results</option>
+            <option value="jurisdiction.">State settings</option>
+          </select>
+          <input type="email" placeholder="Player email" value={email} onChange={(e) => setEmail(e.target.value)} aria-label="Player email" className="audit-email" />
+          <button type="submit" className="pill-btn sm">
+            Filter
+          </button>
+        </form>
+      </header>
+      <p className="muted small">Append-only: entries can’t be edited or deleted, by anyone.</p>
+      {err && <p className="ticket-error">{err}</p>}
+      {!rows ? (
+        <p className="muted">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="adm-empty">No entries match.</p>
+      ) : (
+        <ul className="audit-rows">
+          {rows.map((r) => (
+            <li key={r.id}>
+              <span className="audit-when">{new Date(r.at).toLocaleString()}</span>
+              <strong>{r.action}</strong>
+              <span className="muted small">
+                by {r.actor}
+                {r.subject ? `, player ${r.subject}` : ''}
+              </span>
+              <code className="audit-details">{JSON.stringify(r.details)}</code>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  );
+}
+
 function CreditFunds({ run }: { run: (body: Record<string, unknown>) => Promise<boolean> }) {
   const [email, setEmail] = useState('');
   const [amount, setAmount] = useState('');
@@ -438,7 +509,7 @@ function CreditFunds({ run }: { run: (body: Record<string, unknown>) => Promise<
 import { gameTime } from '../lib/format';
 import { Icon } from '../components/Icon';
 
-type Tab = 'overview' | 'games' | 'picks' | 'payments' | 'compliance';
+type Tab = 'overview' | 'games' | 'picks' | 'payments' | 'compliance' | 'audit';
 type Phase = 'live' | 'upcoming' | 'final' | 'cancelled';
 
 const phaseOf = (g: AdminGame, now: number): Phase =>
@@ -1154,7 +1225,7 @@ export function Admin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const tab = ([...['overview', 'games', 'picks'], ...(REAL_MONEY ? ['payments', 'compliance'] : [])].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as Tab;
+  const tab = ([...['overview', 'games', 'picks'], ...(REAL_MONEY ? ['payments', 'compliance', 'audit'] : [])].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as Tab;
   const gameFilter = params.get('game');
 
   const go = useCallback(
@@ -1321,9 +1392,9 @@ export function Admin() {
       )}
 
       <div className="seg seg-tabs adm-tabs" role="tablist">
-        {(['overview', 'games', 'picks', ...(REAL_MONEY ? ['payments', 'compliance'] : [])] as Tab[]).map((t) => (
+        {(['overview', 'games', 'picks', ...(REAL_MONEY ? ['payments', 'compliance', 'audit'] : [])] as Tab[]).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => go(t)}>
-            {t === 'overview' ? 'Overview' : t === 'games' ? 'Games' : t === 'picks' ? 'Picks' : t === 'payments' ? 'Payments' : 'Compliance'}
+            {t === 'overview' ? 'Overview' : t === 'games' ? 'Games' : t === 'picks' ? 'Picks' : t === 'payments' ? 'Payments' : t === 'compliance' ? 'Compliance' : 'Audit log'}
             <span className="cnt">{t === 'games' ? data.games.length : t === 'picks' ? data.picks.length : ''}</span>
           </button>
         ))}
@@ -1349,6 +1420,7 @@ export function Admin() {
       )}
       {tab === 'compliance' && REAL_MONEY && <ComplianceTab notify={notify} />}
       {tab === 'payments' && REAL_MONEY && <PaymentsTab notify={notify} />}
+      {tab === 'audit' && REAL_MONEY && <AuditTab />}
       {tab === 'games' && <GamesTab data={data} now={now} run={run} busy={busy} go={go} />}
       {tab === 'picks' && (
         <PicksTab

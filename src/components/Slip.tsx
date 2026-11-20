@@ -225,7 +225,13 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
         <span className="cta-amt">{money(safeAmount)}</span>
       </button>
       <p className="fine">
-        {realMoney ? 'Real money. Play responsibly. Must be of legal age in an eligible state.' : 'Play-money credits only. No real money.'}
+        {realMoney ? (
+          <>
+            Real money. Must be of legal age in an eligible state. <a href="/responsible-gaming">Limits and breaks</a>
+          </>
+        ) : (
+          'Play-money credits only. No real money.'
+        )}
       </p>
     </div>
   );

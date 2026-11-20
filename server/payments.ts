@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
-import { db } from './supabase.js';
+import { db, limitMessage, rateLimit } from './supabase.js';
 import { GEO_MESSAGES, checkLocation } from './geo.js';
 import { loadProfile, recordDevice, requirePlayer } from './rm.js';
 
@@ -145,13 +145,15 @@ const MONEY_ERRORS: [RegExp, number, string][] = [
   [/kyc_required/, 403, 'Verify your identity on the Account page before withdrawing.'],
   [/method_not_found|method_not_verified/, 422, 'Withdrawals go back to a payment method you’ve deposited with. Choose one of those.'],
   [/withdrawal_not_cancellable/, 409, 'That withdrawal is already being processed.'],
-  [/self_excluded/, 403, 'Your account is self-excluded, so deposits are blocked.'],
+  [/self_excluded/, 403, 'You’re on a break or self-excluded, so deposits are paused. You can still withdraw.'],
   [/account_blocked/, 403, 'Your account is on hold. Contact support.'],
   [/under_age/, 403, 'You’re under the minimum age where you are right now.'],
   [/location_not_eligible|location_check_required/, 403, GEO_MESSAGES.state_not_eligible],
   [/profile_required/, 403, 'Finish setting up your account first.'],
 ];
 const moneyError = (msg: string) => {
+  const lim = limitMessage(msg);
+  if (lim) return json({ error: lim, code: 'limit_exceeded' }, 403);
   const hit = MONEY_ERRORS.find(([re]) => re.test(msg));
   return hit ? json({ error: hit[2] }, hit[1]) : json({ error: 'That didn’t go through. Try again.' }, 500);
 };
@@ -168,6 +170,8 @@ async function readJson<T>(req: Request): Promise<T | null> {
 export async function depositPOST(req: Request) {
   const r = await requirePlayer(req);
   if (r.error) return r.error;
+  const limited = await rateLimit(`deposit:${r.user.id}`, 5, 600);
+  if (limited) return limited;
   const provider = paymentProvider();
   if (!provider) return json({ error: 'Deposits aren’t open yet.' }, 503);
   const body = await readJson<{ amount_cents?: number; idempotency_key?: string }>(req);
@@ -202,6 +206,8 @@ export async function depositPOST(req: Request) {
 export async function withdrawPOST(req: Request) {
   const r = await requirePlayer(req);
   if (r.error) return r.error;
+  const limited = await rateLimit(`withdraw:${r.user.id}`, 5, 3600);
+  if (limited) return limited;
   if (!paymentProvider()) return json({ error: 'Withdrawals aren’t open yet.' }, 503);
   const body = await readJson<{ amount_cents?: number; method_id?: string; idempotency_key?: string }>(req);
   const amount = Number(body?.amount_cents);
@@ -281,6 +287,8 @@ export async function sandboxCheckoutPOST(req: Request) {
   const r = await requirePlayer(req);
   if (r.error) return r.error;
   if (paymentProvider() !== sandbox) return json({ error: 'The sandbox processor is off.' }, 404);
+  const limited = await rateLimit(`sandbox:${r.user.id}`, 10, 600);
+  if (limited) return limited;
   const body = await readJson<{ ref?: string; outcome?: string; last4?: string }>(req);
   const { data: pay, error } = await db()
     .from('payments')

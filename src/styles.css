@@ -1636,3 +1636,34 @@ li.void .ep-res { width: auto; padding: 0 6px; border-radius: 6px; background: v
 .wd-context b { color: var(--ink); }
 .recon-csv { width: 100%; min-height: 90px; font: 13px/1.4 ui-monospace, monospace; padding: 10px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
 .adm-tabs { max-width: 680px; }
+
+/* ----- Responsible gaming ----- */
+.rg-help { margin: -4px 0 10px; }
+.rg-limits { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.rg-limit { display: grid; gap: 6px; padding: 12px 14px; border-radius: var(--r); background: var(--surface); border: 1px solid var(--line); }
+.rg-limit-top { display: flex; align-items: baseline; gap: 10px; }
+.rg-limit-top strong { font-size: 20px; font-weight: 800; font-stretch: 75%; font-variant-numeric: tabular-nums; }
+.rg-limit-top .text-btn { margin-left: auto; font-size: 13px; }
+.rg-period { font-size: 13px; color: var(--muted); min-width: 64px; }
+.rg-bar { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.rg-bar i { display: block; height: 100%; background: var(--ink); }
+.rg-bar i.full { background: var(--miss); }
+.rg-pending { font-size: 12px; font-weight: 600; color: var(--ink-2); }
+.rg-edit { display: grid; gap: 8px; padding-top: 6px; }
+.rg-edit-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.rg-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+.danger-btn { color: var(--miss); border-color: color-mix(in srgb, var(--miss) 40%, transparent); }
+.rg-excluded, .excl-banner { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-radius: 12px; background: var(--night); color: var(--night-fg); font-size: 14px; font-weight: 600; margin-bottom: 18px; text-decoration: none; }
+.rg-summary { overflow-x: auto; }
+.rg-summary .sport-table th, .rg-summary .sport-table td { height: 44px; font-size: 14px; }
+.rg-summary .sport-table tbody th { font-size: 14px; font-stretch: 100%; font-weight: 700; }
+.rc-sheet .sheet-body { padding-top: 20px; display: grid; gap: 12px; }
+.rc-title { font-size: 26px; font-weight: 800; font-stretch: 75%; line-height: 1.05; }
+.rc-actions { display: grid; gap: 8px; }
+.rc-actions .ghost-sm { justify-content: center; height: 44px; }
+.audit-rows { list-style: none; margin: 0; padding: 0; display: grid; }
+.audit-rows li { display: grid; gap: 2px; padding: 10px 0; border-top: 1px solid var(--line); }
+.audit-when { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.audit-details { font-size: 12px; color: var(--ink-2); white-space: pre-wrap; word-break: break-word; }
+.audit-email { height: 34px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 14px; min-width: 0; }
+.adm-tabs { max-width: 780px; }

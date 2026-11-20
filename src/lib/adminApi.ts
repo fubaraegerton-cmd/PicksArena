@@ -97,3 +97,19 @@ export function adminPayments(credential: string) {
 export function adminPaymentsPost(credential: string, body: Record<string, unknown>) {
   return callAt<{ ok: true; note: string; payments: PaymentsData }>('/api/admin', credential, { method: 'POST', body: JSON.stringify(body) });
 }
+
+export interface AuditRow {
+  id: number;
+  at: string;
+  actor: string;
+  action: string;
+  subject: string | null;
+  details: Record<string, unknown>;
+}
+
+export function adminAudit(credential: string, action = '', email = '') {
+  const q = new URLSearchParams({ view: 'audit' });
+  if (action) q.set('action', action);
+  if (email) q.set('email', email);
+  return callAt<{ rows: AuditRow[] }>(`/api/admin?${q}`, credential);
+}

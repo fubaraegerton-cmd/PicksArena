@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { ageOn, db, playerFrom, supabaseConfigured } from './supabase.js';
+import { ageOn, db, limitMessage, playerFrom, rateLimit, supabaseConfigured } from './supabase.js';
 import { GEO_MESSAGES, checkLocation, deviceHash } from './geo.js';
 import { applyDecision, kycProvider, latestKyc } from './kyc.js';
 
@@ -62,6 +62,8 @@ export async function profileGET(req: Request) {
 export async function profilePOST(req: Request) {
   const r = await requirePlayer(req);
   if (r.error) return r.error;
+  const limited = await rateLimit(`profile:${r.user.id}`, 10, 3600);
+  if (limited) return limited;
   let body: { dob?: string; state?: string };
   try {
     body = await req.json();
@@ -100,7 +102,7 @@ const ENTRY_ERRORS: [RegExp, number, string][] = [
   [/pick_count_out_of_range/, 422, 'Choose 2 to 6 picks.'],
   [/stake_below_minimum/, 422, 'The minimum entry is $1.'],
   [/stake_above_maximum/, 422, 'The maximum entry is $1,000.'],
-  [/self_excluded/, 403, 'Your account is self-excluded, so new entries are blocked.'],
+  [/self_excluded/, 403, 'You’re on a break or self-excluded, so new entries are paused. You can still withdraw.'],
   [/under_age/, 403, 'You’re under the minimum age where you are right now.'],
   [/account_blocked/, 403, 'Your account is on hold. Contact support.'],
   [/location_not_eligible|location_check_required/, 403, GEO_MESSAGES.state_not_eligible],
@@ -111,6 +113,8 @@ const ENTRY_ERRORS: [RegExp, number, string][] = [
 export async function entriesPOST(req: Request) {
   const r = await requirePlayer(req);
   if (r.error) return r.error;
+  const limited = await rateLimit(`entry:${r.user.id}`, 10, 60);
+  if (limited) return limited;
   let body: { picks?: { projection_id: string; direction: string }[]; stake_cents?: number; idempotency_key?: string };
   try {
     body = await req.json();
@@ -141,6 +145,8 @@ export async function entriesPOST(req: Request) {
     p_geo_check: geo.id,
   });
   if (error) {
+    const lim = limitMessage(error.message);
+    if (lim) return json({ error: lim, code: 'limit_exceeded' }, 403);
     const hit = ENTRY_ERRORS.find(([re]) => re.test(error.message));
     if (hit) return json({ error: hit[2] }, hit[1]);
     return json({ error: 'The entry couldn’t be placed. Try again.' }, 500);
@@ -164,6 +170,8 @@ export async function kycGET(req: Request) {
 export async function kycPOST(req: Request) {
   const r = await requirePlayer(req);
   if (r.error) return r.error;
+  const limited = await rateLimit(`kyc:${r.user.id}`, 5, 3600);
+  if (limited) return limited;
   const provider = kycProvider();
   if (!provider) return json({ error: 'Identity checks aren’t connected yet. Try again later.' }, 503);
   const profile = await loadProfile(r.user.id);

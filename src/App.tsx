@@ -12,6 +12,8 @@ import { Account } from './pages/Account';
 import { Admin } from './pages/Admin';
 import { Login } from './pages/Login';
 import { SandboxCheckout } from './pages/SandboxCheckout';
+import { ResponsibleGaming } from './pages/ResponsibleGaming';
+import { ExclusionBanner, RealityCheck } from './components/RealityCheck';
 
 const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
   { to: '/', label: 'Home', icon: 'home', end: true },
@@ -135,6 +137,7 @@ export default function App() {
       <Sidebar />
       <AppBar />
       <main className="content" key={pathname}>
+        <ExclusionBanner />
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/board" element={<Board />} />
@@ -144,10 +147,12 @@ export default function App() {
           <Route path="/admin" element={<Admin />} />
           <Route path="/login" element={<Login />} />
           <Route path="/pay/sandbox" element={<SandboxCheckout />} />
+          <Route path="/responsible-gaming" element={<ResponsibleGaming />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>
       <TabBar />
+      <RealityCheck />
       {toast && (
         <div className="toast" role="status" key={toast}>
           {toast}

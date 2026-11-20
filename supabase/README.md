@@ -58,7 +58,17 @@ never run it against a real Supabase project.
 - `deposit.reversed` (chargeback) freezes the account and claws back unspent cash.
 - `reconcile_payments()` — processor report vs payments vs ledger; empty = healthy.
 
+## Phase 5 — responsible gaming, audit, rate limits (`…000005`, `…000006`)
+
+- `player_limits` + `set_limit` / `current_limit` / `limit_usage` / `enforce_limits` — deposit, stake
+  and loss limits per rolling day/week/month, enforced inside `start_deposit` and `place_entry`.
+  Stricter = immediate; looser or removed = after 24 hours.
+- `player_exclusions` + `set_exclusion` — cool-off and self-exclusion; a trigger stops
+  `self_exclusion_until` from ever being shortened.
+- `spend_summary(user)` — deposits, withdrawals, staked, won back per period.
+- `audit_log` + `audit_capture` triggers + `log_audit` — append-only trail of every sensitive change.
+- `hit_rate_limit(key, max, window_seconds)` — fixed-window counters for the API.
+
 ## Next phases
 
-5. limits, self-exclusion, audit log ·
-6. operator console · 7. fraud and risk.
+6. operator console (user lookup, line overrides, force-settle) · 7. fraud and risk.

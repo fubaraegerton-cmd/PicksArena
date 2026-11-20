@@ -1,7 +1,7 @@
 import { timingSafeEqual, randomUUID, createHash } from 'node:crypto';
 import { applyAction, validateAction, type AdminAction } from '../src/shared/admin.js';
 import { loadData, saveData, storageMode } from './storage.js';
-import { db, supabaseConfigured } from './supabase.js';
+import { audit, db, rateLimit, supabaseConfigured } from './supabase.js';
 import { OperatorError, applySlateAction, loadSlate } from './slate.js';
 import { applyDecision } from './kyc.js';
 import { PaymentsOperatorError, importSettlements, paymentsView, reviewWithdrawal, simulateChargeback } from './payments.js';
@@ -63,6 +63,7 @@ export async function adminGET(req: Request): Promise<Response> {
   try {
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'compliance') return json(await complianceView());
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'payments') return json(await paymentsView(await emailsById()));
+    if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'audit') return json(await auditView(new URL(req.url).searchParams));
     if (supabaseConfigured()) return json({ data: await loadSlate('operator'), storage: 'supabase' });
     return json({ data: await loadData(), storage: storageMode() });
   } catch (e) {
@@ -81,9 +82,24 @@ export async function adminPOST(req: Request): Promise<Response> {
     return json({ error: 'Invalid JSON body.' }, 400);
   }
   if (supabaseConfigured()) {
+    const act = (body as unknown as { action: string }).action;
+    const by = (await operatorEmail(req)) ?? 'admin-password';
+    const limited = await rateLimit(`admin:${by}`, 120, 60);
+    if (limited) return limited;
+    const res = await operatorAction(body, act, by);
+    if (res.ok) {
+      const { csv: _csv, baseVersion: _v, ...details } = body as unknown as Record<string, unknown>;
+      const subject = typeof details.userId === 'string' ? details.userId : null;
+      await audit(`operator:${by}`, `operator.${act}`, subject, details);
+    }
+    return res;
+  }
+  return legacyAdminPOST(body);
+}
+
+async function operatorAction(body: AdminAction & { baseVersion?: number }, act: string, by: string): Promise<Response> {
+  {
     try {
-      const act = (body as unknown as { action: string }).action;
-      const by = (await operatorEmail(req)) ?? 'admin-password';
       if (act === 'creditFunds') return await creditFunds(body as unknown as CreditFunds);
       if (act === 'reviewWithdrawal' || act === 'importSettlements' || act === 'simulateChargeback') {
         const b = body as unknown as { paymentId?: string; approve?: boolean; reason?: string; csv?: string };
@@ -111,6 +127,9 @@ export async function adminPOST(req: Request): Promise<Response> {
       return json({ error: (e as Error).message, data: await loadSlate('operator').catch(() => undefined) }, status);
     }
   }
+}
+
+async function legacyAdminPOST(body: AdminAction & { baseVersion?: number }): Promise<Response> {
   try {
     const data = await loadData();
     if (typeof body.baseVersion === 'number' && body.baseVersion !== data.version)
@@ -227,4 +246,27 @@ async function complianceAction(a: ComplianceAction, by: string): Promise<Respon
     if (error) return json({ error: error.message }, 500);
   }
   return json({ ok: true, compliance: await complianceView() });
+}
+
+/** Audit log viewer: newest first, optional filters by action prefix or player email. */
+async function auditView(params: URLSearchParams) {
+  const emails = await emailsById();
+  let q = db().from('audit_log').select('id, at, actor, action, subject_user, entity, entity_id, details').order('id', { ascending: false }).limit(200);
+  const action = params.get('action');
+  if (action) q = q.like('action', `${action.replace(/[%_]/g, '')}%`);
+  const email = params.get('email')?.toLowerCase();
+  if (email) {
+    const id = [...emails.entries()].find(([, e]) => e.toLowerCase() === email)?.[0];
+    if (!id) return { rows: [] };
+    q = q.eq('subject_user', id);
+  }
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+  const name = (actor: string) => {
+    const m = /^player:(.+)$/.exec(actor);
+    return m ? `player ${emails.get(m[1]) ?? m[1]}` : actor;
+  };
+  return {
+    rows: (data ?? []).map((r) => ({ ...r, actor: name(r.actor as string), subject: r.subject_user ? emails.get(r.subject_user as string) ?? r.subject_user : null })),
+  };
 }

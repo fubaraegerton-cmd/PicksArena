@@ -92,7 +92,7 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
     await admin.end();
     db = new pg.Pool({ host: HOST, port: PORT, user: USER, database: DB, max: 6 });
     await db.query(read('tests/supabase_shim.sql'));
-    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments'])
+    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments', '20261122000005_responsible_gaming_audit', '20261122000006_limit_usage_checkout_window'])
       await db.query(read(`migrations/${m}.sql`));
     await db.query(`update public.jurisdictions set enabled = true where state in ('NJ', 'PA')`);
   });
@@ -554,8 +554,9 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
       await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:wrong-action', $2)`, [u, await geoFor(u, 'withdrawal')])).rejects.toThrow(/location_check_required/);
       await q(`update public.profiles set self_exclusion_until = now() + interval '1 day' where id = $1`, [u]);
       await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:excluded', $2)`, [u, await geoFor(u, 'deposit')])).rejects.toThrow(/self_excluded/);
-      await q(`update public.profiles set self_exclusion_until = null, flags = '{"blocked": true}' where id = $1`, [u]);
-      await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:blocked', $2)`, [u, await geoFor(u, 'deposit')])).rejects.toThrow(/account_blocked/);
+      const held = await user(); // exclusions can't be shortened, so use a fresh player for the hold check
+      await q(`update public.profiles set flags = '{"blocked": true}' where id = $1`, [held]);
+      await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:blocked', $2)`, [held, await geoFor(held, 'deposit')])).rejects.toThrow(/account_blocked/);
     });
 
     it('withdraws only after KYC, only to a method the player deposited with', async () => {
@@ -661,6 +662,111 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
         await c.query('rollback');
         c.release();
       }
+    });
+  });
+
+  describe('phase 5: limits, exclusions, audit log, rate limits', () => {
+    const picks = (s: Awaited<ReturnType<typeof slate>>) => [{ id: s.a, d: 'more' as const }, { id: s.b, d: 'less' as const }];
+    const setLimit = (u: string, kind: string, period: string, cents: number | null) =>
+      one<{ effective_at: Date }>(`select * from public.set_limit($1, $2, $3, $4, 'player')`, [u, kind, period, cents]);
+    const depositGeo = async (u: string) =>
+      (await one<{ id: string }>(`insert into public.geo_checks (user_id, action, region, country, provider, decision) values ($1, 'deposit', 'NJ', 'US', 'test', 'allow') returning id`, [u]))!.id;
+
+    it('applies a stricter limit now and a looser one only after 24 hours', async () => {
+      const u = await user();
+      const first = await setLimit(u, 'stake', 'day', 5_000);
+      expect(Math.abs(+first!.effective_at - Date.now())).toBeLessThan(5_000);
+      const looser = await setLimit(u, 'stake', 'day', 50_000);
+      expect(+looser!.effective_at - Date.now()).toBeGreaterThan(23 * 3600_000);
+      expect(await one(`select public.current_limit($1, 'stake', 'day') as l`, [u])).toEqual({ l: '5000' });
+      const removed = await setLimit(u, 'stake', 'day', null);
+      expect(+removed!.effective_at - Date.now()).toBeGreaterThan(23 * 3600_000);
+      await setLimit(u, 'stake', 'day', 3_000); // tightening applies at once, even with a looser request pending
+      expect(await one(`select public.current_limit($1, 'stake', 'day') as l`, [u])).toEqual({ l: '3000' });
+      await expect(q(`update public.player_limits set amount_cents = 1 where user_id = $1`, [u])).rejects.toThrow(/append-only/);
+    });
+
+    it('blocks entries over a stake limit and over a loss limit', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 20_000);
+      await setLimit(u, 'stake', 'week', 2_500);
+      await place(u, picks(s), 2_000);
+      await expect(place(u, [{ id: s.c, d: 'more' }, { id: s.d, d: 'less' }], 1_000)).rejects.toThrow(/limit_exceeded:stake:week:500/);
+      const v = await user();
+      await deposit(v, 20_000);
+      await setLimit(v, 'loss', 'day', 1_500);
+      const e = (await place(v, picks(s), 1_000))!;
+      await grade(s.a, 10); // lost
+      await grade(s.b, 3);
+      expect((await entry(e.id))!.status).toBe('lost');
+      await expect(place(v, [{ id: s.c, d: 'more' }, { id: s.d, d: 'less' }], 600)).rejects.toThrow(/limit_exceeded:loss:day/);
+      expect((await place(v, [{ id: s.c, d: 'more' }, { id: s.d, d: 'less' }], 500))!.status).toBe('open');
+    });
+
+    it('blocks deposits over a deposit limit, counting pending checkouts', async () => {
+      const u = await user();
+      await setLimit(u, 'deposit', 'month', 5_000);
+      await q(`select public.start_deposit($1, 3000, 'sandbox', 'dep:lim-1', $2)`, [u, await depositGeo(u)]);
+      await expect(q(`select public.start_deposit($1, 2500, 'sandbox', 'dep:lim-2', $2)`, [u, await depositGeo(u)])).rejects.toThrow(/limit_exceeded:deposit:month:2000/);
+      await q(`select public.start_deposit($1, 2000, 'sandbox', 'dep:lim-3', $2)`, [u, await depositGeo(u)]);
+    });
+
+    it('stops counting an abandoned checkout after an hour', async () => {
+      const u = await user();
+      await setLimit(u, 'deposit', 'day', 5_000);
+      await q(`select public.start_deposit($1, 4000, 'sandbox', 'dep:abandon-1', $2)`, [u, await depositGeo(u)]);
+      expect(await one(`select public.limit_usage($1, 'deposit', now() - interval '1 day') as n`, [u])).toEqual({ n: '4000' });
+      await q(`update public.payments set created_at = now() - interval '2 hours' where idempotency_key = 'dep:abandon-1'`);
+      expect(await one(`select public.limit_usage($1, 'deposit', now() - interval '1 day') as n`, [u])).toEqual({ n: '0' });
+    });
+
+    it('cool-off and self-exclusion block deposits and entries at once and can only be extended', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      const until = (await one<{ u: Date }>(`select public.set_exclusion($1, 'cool_off', 1, 'player') as u`, [u]))!.u;
+      expect(+until - Date.now()).toBeGreaterThan(23 * 3600_000);
+      await expect(place(u, picks(s), 1_000)).rejects.toThrow(/self_excluded/);
+      await expect(q(`select public.start_deposit($1, 2000, 'sandbox', 'dep:cool', $2)`, [u, await depositGeo(u)])).rejects.toThrow(/self_excluded/);
+      await expect(q(`update public.profiles set self_exclusion_until = null where id = $1`, [u])).rejects.toThrow(/cannot_be_shortened/);
+      await expect(q(`select public.set_exclusion($1, 'cool_off', 3, 'player')`, [u])).rejects.toThrow(/invalid_cool_off/);
+      const perm = (await one<{ u: string }>(`select public.set_exclusion($1, 'self_exclusion', null, 'player')::text as u`, [u]))!.u;
+      expect(perm).toBe('infinity');
+      await q(`select public.set_exclusion($1, 'cool_off', 1, 'operator')`, [u]); // a shorter one never shortens it
+      expect(await one(`select self_exclusion_until::text as u from public.profiles where id = $1`, [u])).toEqual({ u: 'infinity' });
+    });
+
+    it('reports spend for each period', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      await place(u, [{ id: s.c, d: 'more' }, { id: s.d, d: 'less' }], 1_500);
+      const rows = await q<{ period: string; staked_cents: string }>(`select * from public.spend_summary($1)`, [u]);
+      expect(rows.map((r) => [r.period, Number(r.staked_cents)])).toEqual([['day', 1_500], ['week', 1_500], ['month', 1_500], ['all', 1_500]]);
+    });
+
+    it('writes an append-only audit trail for money, limits, exclusions and holds', async () => {
+      const u = await user();
+      await deposit(u, 4_200);
+      await setLimit(u, 'deposit', 'day', 10_000);
+      await q(`select public.set_exclusion($1, 'cool_off', 7, 'player')`, [u]);
+      await q(`update public.profiles set flags = flags || '{"blocked": true}' where id = $1`, [u]);
+      await q(`select public.log_audit('operator:ops@test', 'account.hold', $1::uuid, 'profiles', $2::text, '{"reason":"test"}')`, [u, u]);
+      const rows = await q<{ action: string; actor: string; details: Record<string, unknown> }>(`select action, actor, details from public.audit_log where subject_user = $1 order by id`, [u]);
+      const actions = rows.map((r) => r.action);
+      expect(actions).toEqual(expect.arrayContaining(['ledger.deposit', 'limit.set', 'exclusion.cool_off', 'profile.update', 'account.hold']));
+      expect(rows.find((r) => r.action === 'ledger.deposit')!.details.amount_cents).toBe(4_200);
+      expect(rows.find((r) => r.action === 'account.hold')!.actor).toBe('operator:ops@test');
+      await expect(q(`delete from public.audit_log where subject_user = $1`, [u])).rejects.toThrow(/append-only/);
+      await expect(q(`update public.audit_log set actor = 'x' where subject_user = $1`, [u])).rejects.toThrow(/append-only/);
+    });
+
+    it('rate-limits per key and window', async () => {
+      const key = `test:${randomUUID()}`;
+      const results = [];
+      for (let i = 0; i < 4; i++) results.push((await one<{ ok: boolean }>(`select public.hit_rate_limit($1, 3, 60) as ok`, [key]))!.ok);
+      expect(results).toEqual([true, true, true, false]);
     });
   });
 

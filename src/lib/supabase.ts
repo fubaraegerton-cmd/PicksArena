@@ -250,3 +250,36 @@ export async function fetchPayments(): Promise<{ payments: PaymentRow[]; methods
     methods: (m.data ?? []) as PaymentMethodRow[],
   };
 }
+
+// ---------- responsible gaming (phase 5) ----------
+export type LimitKind = 'deposit' | 'stake' | 'loss';
+export type LimitPeriod = 'day' | 'week' | 'month';
+export interface RgLimit {
+  kind: LimitKind;
+  period: LimitPeriod;
+  window: string;
+  current_cents: number | null;
+  used_cents: number;
+  pending: { amount_cents: number | null; effective_at: string } | null;
+}
+export interface RgState {
+  limits: RgLimit[];
+  exclusion: { until: string; kind: 'cool_off' | 'self_exclusion' } | null;
+  summary: { period: 'day' | 'week' | 'month' | 'all'; deposits_cents: number; withdrawals_cents: number; staked_cents: number; returned_cents: number }[];
+}
+export const getRg = () => call<RgState>('/api/rm/rg');
+export const setLimit = (kind: LimitKind, period: LimitPeriod, amountCents: number | null) =>
+  call<{ ok: true; immediate: boolean; message: string }>('/api/rm/rg', {
+    method: 'POST',
+    body: JSON.stringify({ action: 'setLimit', kind, period, amount_cents: amountCents }),
+  });
+export const exclude = (kind: 'cool_off' | 'self_exclusion', days: number | null) =>
+  call<{ ok: true; until: string }>('/api/rm/rg', { method: 'POST', body: JSON.stringify({ action: 'exclude', kind, days, confirm: true }) });
+
+/** True while a cool-off or self-exclusion is running ('infinity' = permanent). */
+export const excludedUntil = (until: string | null | undefined): Date | 'permanent' | null => {
+  if (!until) return null;
+  if (until === 'infinity') return 'permanent';
+  const d = new Date(until);
+  return d.getTime() > Date.now() ? d : null;
+};

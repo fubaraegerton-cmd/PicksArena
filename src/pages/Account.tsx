@@ -180,6 +180,20 @@ export function Account() {
         </section>
       )}
 
+      {realMoney && (
+        <section className="group">
+          <h2 className="group-title">Play responsibly</h2>
+          <Link to="/responsible-gaming" className="row-card">
+            <Icon name="shield" size={18} />
+            <div>
+              <strong>Limits, breaks and self-exclusion</strong>
+              <p>Set deposit, stake and loss limits, see your spending, or take a break.</p>
+            </div>
+            <Icon name="arrow" size={18} />
+          </Link>
+        </section>
+      )}
+
       <section className="group">
         <h2 className="group-title">House</h2>
         <Link to="/admin" className="row-card">
