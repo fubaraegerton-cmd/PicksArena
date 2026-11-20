@@ -69,6 +69,12 @@ never run it against a real Supabase project.
 - `audit_log` + `audit_capture` triggers + `log_audit` — append-only trail of every sensitive change.
 - `hit_rate_limit(key, max, window_seconds)` — fixed-window counters for the API.
 
+## Phase 6 — operator console (`…000007`)
+
+- `force_settle_leg(entry, projection, 'hit'|'miss'|'void', reason, by)` — decides one pending leg, then settles.
+- `fail_pending_deposit(payment, reason, by)` — open checkout → failed; no money moves.
+- `player_sessions(user)` — Supabase Auth sessions as JSON, for the console.
+
 ## Next phases
 
-6. operator console (user lookup, line overrides, force-settle) · 7. fraud and risk.
+7. fraud and risk.

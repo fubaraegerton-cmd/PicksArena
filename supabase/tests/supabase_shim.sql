@@ -13,3 +13,4 @@ $$;
 grant usage on schema auth to anon, authenticated, service_role;
 grant execute on function auth.uid() to anon, authenticated, service_role;
 grant usage on schema public to anon, authenticated, service_role;
+create table if not exists auth.sessions (id uuid primary key default gen_random_uuid(), user_id uuid references auth.users (id), created_at timestamptz default now(), updated_at timestamptz default now(), user_agent text, ip inet, factor_id uuid);

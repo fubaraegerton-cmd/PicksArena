@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store';
 import { eligibleStates, saveProfile, supabase } from '../lib/supabase';
@@ -62,6 +62,14 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const justSignedIn = useRef(false);
+  // After a successful sign-in, go where the player was heading (setup comes first if it's unfinished).
+  useEffect(() => {
+    if (justSignedIn.current && session && profile?.dob) {
+      justSignedIn.current = false;
+      navigate(next, { replace: true });
+    }
+  }, [session, profile, next, navigate]);
   const [eligible, setEligible] = useState<{ state: string; name: string; min_age: number }[] | null>(null);
   useEffect(() => {
     eligibleStates().then(setEligible).catch(() => setEligible([]));
@@ -122,6 +130,7 @@ export function Login() {
       if (mode === 'signin') {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw new Error(error.message === 'Invalid login credentials' ? 'That email and password don’t match.' : error.message);
+        justSignedIn.current = true;
         await refreshAccount();
         return;
       }

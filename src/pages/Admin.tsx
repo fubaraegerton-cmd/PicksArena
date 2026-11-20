@@ -6,6 +6,7 @@ import type { AdminAction, AdminData, AdminGame, AdminPick, AdminSport, AdminTea
 import { EMPTY_DATA, lineError } from '../shared/admin';
 import { AdminError, adminAudit, adminCompliance, adminCompliancePost, adminDo, adminLogin, adminPayments, adminPaymentsPost, rememberPassword, savedPassword, type AuditRow, type ComplianceData, type PaymentsData } from '../lib/adminApi';
 import { REAL_MONEY, supabase } from '../lib/supabase';
+import { OperatorsCard, PlayersTab } from './admin/Players';
 
 /** In real-money mode the dashboard authenticates with the signed-in operator's session, checked server-side. */
 async function operatorToken(): Promise<string | null> {
@@ -167,6 +168,8 @@ function ComplianceTab({ notify }: { notify: (m: string) => void }) {
         </ul>
       </section>
 
+      <OperatorsCard notify={notify} />
+
       <section className="adm-card">
         <header className="adm-card-head">
           <h2>Recent location blocks</h2>
@@ -206,6 +209,60 @@ function ComplianceTab({ notify }: { notify: (m: string) => void }) {
 }
 
 const usd = (c: number | null | undefined) => (c == null ? '—' : `$${(Number(c) / 100).toFixed(2)}`);
+
+/** Standard reason codes so declines are consistent and reportable. */
+const DECLINE_REASONS = [
+  ['name_mismatch', 'Name on the payment method doesn’t match the verified identity'],
+  ['identity_unverified', 'Identity check incomplete or failed'],
+  ['suspected_fraud', 'Suspected fraud or account takeover'],
+  ['duplicate_account', 'Linked to another account'],
+  ['responsible_gaming', 'Responsible gaming review'],
+  ['processor_issue', 'Payment method can’t receive payouts'],
+  ['other', 'Other (explain in the note)'],
+] as const;
+const FAIL_REASONS = [
+  ['processor_failed', 'Processor reports the payment failed'],
+  ['abandoned', 'Checkout abandoned (processor confirms no charge)'],
+  ['other', 'Other (explain in the note)'],
+] as const;
+
+function ReasonPicker({ reasons, onPick, label, busy }: { reasons: readonly (readonly [string, string])[]; onPick: (reason: string) => void; label: string; busy: boolean }) {
+  const [open, setOpen] = useState(false);
+  const [code, setCode] = useState<string>(reasons[0][0]);
+  const [note, setNote] = useState('');
+  if (!open)
+    return (
+      <button type="button" className="ghost-sm" disabled={busy} onClick={() => setOpen(true)}>
+        {label}
+      </button>
+    );
+  return (
+    <form
+      className="reason-picker"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const text = reasons.find(([c]) => c === code)![1];
+        onPick(`${code}: ${text}${note.trim() ? `. ${note.trim()}` : ''}`);
+        setOpen(false);
+      }}
+    >
+      <select value={code} onChange={(e) => setCode(e.target.value)} aria-label="Reason">
+        {reasons.map(([c, t]) => (
+          <option key={c} value={c}>
+            {t}
+          </option>
+        ))}
+      </select>
+      <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Note (shown to the player for declines)" maxLength={200} required={code === 'other'} aria-label="Note" />
+      <button type="submit" className="pill-btn sm" disabled={busy}>
+        {label}
+      </button>
+      <button type="button" className="text-btn" onClick={() => setOpen(false)}>
+        Cancel
+      </button>
+    </form>
+  );
+}
 const ISSUE_LABEL: Record<string, string> = {
   missing_internally: 'Settled by the processor but not completed here',
   amount_mismatch: 'Amounts disagree',
@@ -287,17 +344,7 @@ function PaymentsTab({ notify }: { notify: (m: string) => void }) {
                     <button type="button" className="pill-btn sm" disabled={busy} onClick={() => act({ action: 'reviewWithdrawal', paymentId: w.id, approve: true })}>
                       Approve and pay
                     </button>
-                    <button
-                      type="button"
-                      className="ghost-sm"
-                      disabled={busy}
-                      onClick={() => {
-                        const reason = prompt('Reason for declining (the player sees this):');
-                        if (reason) act({ action: 'reviewWithdrawal', paymentId: w.id, approve: false, reason });
-                      }}
-                    >
-                      Decline
-                    </button>
+                    <ReasonPicker reasons={DECLINE_REASONS} label="Decline" busy={busy} onPick={(reason) => act({ action: 'reviewWithdrawal', paymentId: w.id, approve: false, reason })} />
                   </div>
                 </li>
               );
@@ -305,6 +352,33 @@ function PaymentsTab({ notify }: { notify: (m: string) => void }) {
           </ul>
         )}
       </section>
+
+      {(d.pendingDeposits?.length ?? 0) > 0 && (
+        <section className="adm-card">
+          <header className="adm-card-head">
+            <h2>Pending deposits</h2>
+            <span className="muted">{d.pendingDeposits.length}</span>
+          </header>
+          <p className="muted small">Checkouts that haven’t been confirmed. Only mark one failed once the processor confirms no money was taken; a later success would then be refused and show up in reconciliation.</p>
+          <ul className="adm-rows">
+            {d.pendingDeposits.map((p) => (
+              <li key={p.id} className="adm-row">
+                <div className="adm-row-main">
+                  <strong>
+                    {usd(p.amount_cents)} from {p.email}
+                  </strong>
+                  <span className="muted small">
+                    Started {new Date(p.created_at).toLocaleString()}, {p.provider} ref {p.provider_ref ?? 'none'}
+                  </span>
+                </div>
+                <div className="adm-row-actions">
+                  <ReasonPicker reasons={FAIL_REASONS} label="Mark failed" busy={busy} onPick={(reason) => act({ action: 'failDeposit', paymentId: p.id, reason })} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
 
       <section className="adm-card">
         <header className="adm-card-head wrap">
@@ -509,7 +583,7 @@ function CreditFunds({ run }: { run: (body: Record<string, unknown>) => Promise<
 import { gameTime } from '../lib/format';
 import { Icon } from '../components/Icon';
 
-type Tab = 'overview' | 'games' | 'picks' | 'payments' | 'compliance' | 'audit';
+type Tab = 'overview' | 'players' | 'games' | 'picks' | 'payments' | 'compliance' | 'audit';
 type Phase = 'live' | 'upcoming' | 'final' | 'cancelled';
 
 const phaseOf = (g: AdminGame, now: number): Phase =>
@@ -1171,6 +1245,20 @@ function PicksTab({ data, now, run, busy, gameFilter, setGameFilter }: { data: A
                   </div>
                   <div className="adm-row-actions">
                     {(started || p.actual !== undefined) && g.status !== 'cancelled' && <ResultInput pick={p} busy={busy} run={run} />}
+                    {p.actual === undefined && g.status === 'scheduled' && (
+                      <button
+                        type="button"
+                        className="icon-btn"
+                        aria-label={`Change the line for ${p.playerName}`}
+                        disabled={busy}
+                        onClick={() => {
+                          const v = prompt(`New line for ${p.playerName} ${p.statType} (now ${p.line}). Entries already placed keep the line they locked in.`, String(p.line));
+                          if (v !== null && v.trim() !== '' && Number(v) !== p.line) run({ action: 'updatePick', id: p.id, patch: { line: Number(v) } });
+                        }}
+                      >
+                        <Icon name="edit" size={16} />
+                      </button>
+                    )}
                     <button
                       type="button"
                       className={`icon-btn ${p.special ? 'starred' : ''}`}
@@ -1225,7 +1313,7 @@ export function Admin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const tab = ([...['overview', 'games', 'picks'], ...(REAL_MONEY ? ['payments', 'compliance', 'audit'] : [])].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as Tab;
+  const tab = ([...['overview', 'games', 'picks'], ...(REAL_MONEY ? ['players', 'payments', 'compliance', 'audit'] : [])].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as Tab;
   const gameFilter = params.get('game');
 
   const go = useCallback(
@@ -1392,9 +1480,9 @@ export function Admin() {
       )}
 
       <div className="seg seg-tabs adm-tabs" role="tablist">
-        {(['overview', 'games', 'picks', ...(REAL_MONEY ? ['payments', 'compliance', 'audit'] : [])] as Tab[]).map((t) => (
+        {(['overview', ...(REAL_MONEY ? ['players'] : []), 'games', 'picks', ...(REAL_MONEY ? ['payments', 'compliance', 'audit'] : [])] as Tab[]).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => go(t)}>
-            {t === 'overview' ? 'Overview' : t === 'games' ? 'Games' : t === 'picks' ? 'Picks' : t === 'payments' ? 'Payments' : t === 'compliance' ? 'Compliance' : 'Audit log'}
+            {t === 'overview' ? 'Overview' : t === 'players' ? 'Players' : t === 'games' ? 'Games' : t === 'picks' ? 'Picks' : t === 'payments' ? 'Payments' : t === 'compliance' ? 'Compliance' : 'Audit log'}
             <span className="cnt">{t === 'games' ? data.games.length : t === 'picks' ? data.picks.length : ''}</span>
           </button>
         ))}
@@ -1421,6 +1509,7 @@ export function Admin() {
       {tab === 'compliance' && REAL_MONEY && <ComplianceTab notify={notify} />}
       {tab === 'payments' && REAL_MONEY && <PaymentsTab notify={notify} />}
       {tab === 'audit' && REAL_MONEY && <AuditTab />}
+      {tab === 'players' && REAL_MONEY && <PlayersTab notify={notify} />}
       {tab === 'games' && <GamesTab data={data} now={now} run={run} busy={busy} go={go} />}
       {tab === 'picks' && (
         <PicksTab

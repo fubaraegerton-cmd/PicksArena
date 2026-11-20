@@ -30,6 +30,7 @@ ones being right.
 | 8 | Compliance gates (phase 3) | Geofence, age by state, identity checks, one account per person |
 | 9 | Payments (phase 4) | Deposits/withdrawals behind a processor adapter, signed webhooks, reconciliation |
 | 10 | Responsible gaming + audit (phase 5) | Limits, breaks, self-exclusion, spend summary, reminders, audit log, rate limits |
+| 11 | Operator console (phase 6) | Player lookup, case actions, leg force-settle, line overrides, reason codes, operator management |
 
 The single most important lesson: **build the money core and its tests before any payment or
 UI work for real money.** Everything else is replaceable; ledger mistakes are not.
@@ -254,6 +255,39 @@ Migrations `…_responsible_gaming_audit.sql` and `…_limit_usage_checkout_wind
 - Setting a limit below what's already been used in the window blocks further play until it frees up
   — expected behaviour, worth explaining to support staff.
 
+## 11. Operator console (phase 6)
+
+Migration `…_operator_console.sql`, server `server/console.ts`, UI `src/pages/admin/Players.tsx`.
+
+1. **Player lookup** (Players tab): search by email fragment or player ID → one page per player:
+   identity, age, home state, ID check, flags and break status; wallet (available / held / in play);
+   entries with every leg; ledger statement (each posting with account and memo); payments with
+   method and reviewer; limits (current and pending) and breaks; ID-check history; devices (and how
+   many other accounts share each); Supabase Auth sessions (`player_sessions`, read as JSON so Auth
+   schema changes don't break it); location checks; the player's full audit trail.
+   Actions: hold / remove hold, adjust balance (ledger adjustment with reason), add a case note.
+2. **Force-settle a leg** (`force_settle_leg`): for a pending leg of an open entry — hit, miss or
+   void — with a required reason; the entry then settles through the normal `settle_entry` (voids
+   re-price). Writes `operator.force_settle_leg` with the reason.
+3. **Line overrides**: edit a line from the Picks tab; placed entries keep the line they locked in
+   (`entry_picks.line`), so an override never changes an existing entry. Audited as `line.changed`.
+4. **Queues with reason codes**: withdrawal declines and "mark deposit failed" use standard codes
+   (name mismatch, identity unverified, suspected fraud, duplicate account, responsible gaming,
+   processor issue, other + note). `fail_pending_deposit` moves no money and makes a later success
+   webhook be refused (it then shows in reconciliation).
+5. **Operator management**: Operators card (Compliance tab) grants/revokes `app_metadata.role`.
+   Bootstrap: put your email in `OPERATOR_EMAILS` in Vercel — any **confirmed** account with a listed
+   email is an operator. You can't revoke yourself; emails in `OPERATOR_EMAILS` are removed there.
+   Note: `user_metadata` is editable by players, so roles live only in `app_metadata`.
+
+**Found in phase 6 testing:**
+- After signing in, the login page stopped on "You're signed in" instead of continuing to the page
+  the player was going to. It now redirects (setup first if unfinished).
+- Some actions were audited twice (the database/console row and the generic operator row); those
+  actions now write only their own detailed row.
+- An action that returned no refreshed data left the Payments tab stuck on "Loading…"; every
+  console action now returns the view it changes.
+
 ---
 
 ## Pre-launch: reset the database to a clean ledger
@@ -299,6 +333,10 @@ Never do this after launch. From launch on, corrections are new ledger transacti
 | Audit via triggers + explicit operator rows | Captures every change, plus who made it |
 | Rate limits in Postgres, failing open | No extra service; a limiter outage can't lock everyone out |
 | New migration for fixes, never edit applied ones | Every environment replays the same history |
+| Roles only in `app_metadata`, bootstrap via `OPERATOR_EMAILS` | Players can edit `user_metadata`; the owner can always get in without SQL |
+| Force-settle per leg, not per entry | Keeps settlement in one code path; the entry re-prices normally |
+| Reason codes for declines and failures | Consistent decisions and reportable outcomes |
+| Operators can't revoke themselves | Avoids locking the house out |
 
 ---
 
@@ -329,7 +367,10 @@ Never do this after launch. From launch on, corrections are new ledger transacti
 10. Responsible gaming: limits (stricter now, looser after 24h), breaks and self-exclusion that
    can't be shortened, spend summary, session reminders, help line — all enforced in the database.
    Audit everything append-only; rate-limit every money and account endpoint.
-11. Before going public: reset the pre-launch database, licensed states enabled, KYC +
+11. Operator console: one page per player (money, play, identity, devices, sessions, audit), case
+   notes, holds, adjustments with reasons, per-leg force-settle, line overrides that never touch
+   placed entries, reason codes, and operator management with a bootstrap path.
+12. Before going public: reset the pre-launch database, licensed states enabled, KYC +
    geolocation + payment providers live, responsible-gaming limits, audit log, custom SMTP,
    Vercel protection off.
 
@@ -344,6 +385,7 @@ Never do this after launch. From launch on, corrections are new ledger transacti
 | `KYC_HASH_SALT` | Vercel | Salt for identity fingerprints (set once, never change) |
 | `IPINFO_TOKEN`, `GEO_REQUIRE_VPN_CHECK` | Vercel | VPN/proxy detection |
 | `GEO_DEV_LOCATION` | local only | Simulate a location, e.g. `US-NJ` |
+| `OPERATOR_EMAILS` | Vercel | Comma-separated emails that are operators once their account email is confirmed |
 | `PAYMENTS_PROVIDER` | Vercel | `sandbox` (testing) or a real processor; unset = deposits/withdrawals closed |
 | `PAYMENTS_SANDBOX_SECRET` | Vercel | Webhook signing secret for the sandbox (local dev has a default) |
 | `PAYMENTS_SANDBOX_ALLOW_PRODUCTION` | Vercel | `true` only for pre-launch testing behind Vercel protection |

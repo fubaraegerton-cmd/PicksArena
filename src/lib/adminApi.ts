@@ -88,6 +88,7 @@ export interface PaymentsData {
   }[];
   recent: { id: string; email: string; direction: string; amount_cents: number; status: string; provider: string; provider_ref: string | null; failure_reason: string | null; created_at: string; reviewed_by: string | null }[];
   reconciliation: { issue: string; payment_id: string | null; provider: string; provider_ref: string; ours_cents: number | null; theirs_cents: number | null }[];
+  pendingDeposits: { id: string; email: string; amount_cents: number; provider: string; provider_ref: string | null; created_at: string }[];
 }
 
 export function adminPayments(credential: string) {
@@ -112,4 +113,12 @@ export function adminAudit(credential: string, action = '', email = '') {
   if (action) q.set('action', action);
   if (email) q.set('email', email);
   return callAt<{ rows: AuditRow[] }>(`/api/admin?${q}`, credential);
+}
+
+/** Generic operator calls used by the console (phase 6). */
+export function adminView<T>(credential: string, params: Record<string, string>) {
+  return callAt<T>(`/api/admin?${new URLSearchParams(params)}`, credential);
+}
+export function adminAction<T = { ok: true }>(credential: string, body: Record<string, unknown>) {
+  return callAt<T>('/api/admin', credential, { method: 'POST', body: JSON.stringify(body) });
 }

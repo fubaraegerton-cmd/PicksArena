@@ -4,6 +4,7 @@ import { loadData, saveData, storageMode } from './storage.js';
 import { audit, db, rateLimit, supabaseConfigured } from './supabase.js';
 import { OperatorError, applySlateAction, loadSlate } from './slate.js';
 import { applyDecision } from './kyc.js';
+import { ConsoleError, addNote, failPendingDeposit, forceSettleLeg, isOperatorUser, listOperators, pendingDeposits, playerDetail, playerSearch, setOperator } from './console.js';
 import { PaymentsOperatorError, importSettlements, paymentsView, reviewWithdrawal, simulateChargeback } from './payments.js';
 
 const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
@@ -32,7 +33,7 @@ async function operatorEmail(req: Request): Promise<string | null> {
   const token = bearer(req);
   if (!token || token.split('.').length !== 3) return null;
   const { data, error } = await db().auth.getUser(token);
-  if (error || data.user?.app_metadata?.role !== 'operator') return null;
+  if (error || !isOperatorUser(data.user)) return null;
   return data.user.email ?? data.user.id;
 }
 
@@ -64,6 +65,16 @@ export async function adminGET(req: Request): Promise<Response> {
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'compliance') return json(await complianceView());
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'payments') return json(await paymentsView(await emailsById()));
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'audit') return json(await auditView(new URL(req.url).searchParams));
+    const view = new URL(req.url).searchParams.get('view');
+    if (supabaseConfigured() && view === 'players') return json(await playerSearch(new URL(req.url).searchParams.get('q') ?? ''));
+    if (supabaseConfigured() && view === 'player') {
+      try {
+        return json(await playerDetail(new URL(req.url).searchParams.get('id') ?? ''));
+      } catch (e) {
+        return json({ error: (e as Error).message }, e instanceof ConsoleError ? 404 : 500);
+      }
+    }
+    if (supabaseConfigured() && view === 'operators') return json({ operators: await listOperators() });
     if (supabaseConfigured()) return json({ data: await loadSlate('operator'), storage: 'supabase' });
     return json({ data: await loadData(), storage: storageMode() });
   } catch (e) {
@@ -87,7 +98,8 @@ export async function adminPOST(req: Request): Promise<Response> {
     const limited = await rateLimit(`admin:${by}`, 120, 60);
     if (limited) return limited;
     const res = await operatorAction(body, act, by);
-    if (res.ok) {
+    // These actions write their own, more detailed audit rows (database function or console).
+    if (res.ok && !['addNote', 'setOperator', 'forceSettleLeg'].includes(act)) {
       const { csv: _csv, baseVersion: _v, ...details } = body as unknown as Record<string, unknown>;
       const subject = typeof details.userId === 'string' ? details.userId : null;
       await audit(`operator:${by}`, `operator.${act}`, subject, details);
@@ -116,6 +128,19 @@ async function operatorAction(body: AdminAction & { baseVersion?: number }, act:
           return json({ ok: true, note, payments: await paymentsView(await emailsById()) });
         } catch (e) {
           return json({ error: (e as Error).message }, e instanceof PaymentsOperatorError ? 422 : 500);
+        }
+      }
+      if (['forceSettleLeg', 'failDeposit', 'addNote', 'setOperator'].includes(act)) {
+        const b = body as unknown as Record<string, string | boolean>;
+        try {
+          if (act === 'forceSettleLeg') await forceSettleLeg(String(b.entryId), String(b.projectionId), String(b.result), String(b.reason ?? ''), `operator:${by}`);
+          else if (act === 'failDeposit') await failPendingDeposit(String(b.paymentId), String(b.reason ?? ''), `operator:${by}`);
+          else if (act === 'addNote') await addNote(String(b.userId), String(b.note ?? ''), `operator:${by}`);
+          else await setOperator(String(b.email ?? ''), !!b.grant, `operator:${by}`, by);
+          if (act === 'failDeposit') return json({ ok: true, note: 'Deposit marked failed', payments: await paymentsView(await emailsById()) });
+          return json({ ok: true });
+        } catch (e) {
+          return json({ error: (e as Error).message }, e instanceof ConsoleError ? 422 : 500);
         }
       }
       if (act === 'setJurisdiction' || act === 'kycDecision' || act === 'setBlocked')

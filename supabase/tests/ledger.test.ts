@@ -92,7 +92,7 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
     await admin.end();
     db = new pg.Pool({ host: HOST, port: PORT, user: USER, database: DB, max: 6 });
     await db.query(read('tests/supabase_shim.sql'));
-    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments', '20261122000005_responsible_gaming_audit', '20261122000006_limit_usage_checkout_window'])
+    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments', '20261122000005_responsible_gaming_audit', '20261122000006_limit_usage_checkout_window', '20261123000007_operator_console'])
       await db.query(read(`migrations/${m}.sql`));
     await db.query(`update public.jurisdictions set enabled = true where state in ('NJ', 'PA')`);
   });
@@ -767,6 +767,46 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
       const results = [];
       for (let i = 0; i < 4; i++) results.push((await one<{ ok: boolean }>(`select public.hit_rate_limit($1, 3, 60) as ok`, [key]))!.ok);
       expect(results).toEqual([true, true, true, false]);
+    });
+  });
+
+  describe('phase 6: operator console', () => {
+    it('force-settles a single leg with a reason, then settles the entry', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      const e = (await place(u, [{ id: s.a, d: 'more' }, { id: s.b, d: 'less' }, { id: s.c, d: 'more' }], 1_000))!;
+      await expect(q(`select public.force_settle_leg($1, $2, 'hit', '', 'operator:ops')`, [e.id, s.a])).rejects.toThrow(/reason required/);
+      await q(`select public.force_settle_leg($1, $2, 'void', 'stat correction from league', 'operator:ops')`, [e.id, s.a]);
+      await expect(q(`select public.force_settle_leg($1, $2, 'hit', 'again', 'operator:ops')`, [e.id, s.a])).rejects.toThrow(/leg_already_settled/);
+      expect((await entry(e.id))!.status).toBe('open');
+      await grade(s.b, 3);
+      await grade(s.c, 9);
+      const done = (await entry(e.id))!;
+      expect([done.status, Number(done.payout_cents)]).toEqual(['won', 3_000]); // re-priced as a 2-pick
+      const audit = await one<{ actor: string; details: Record<string, unknown> }>(
+        `select actor, details from public.audit_log where action = 'operator.force_settle_leg' and entity_id = $1`, [e.id]);
+      expect(audit).toMatchObject({ actor: 'operator:ops', details: { result: 'void', reason: 'stat correction from league' } });
+      await expect(q(`select public.force_settle_leg($1, $2, 'hit', 'too late', 'operator:ops')`, [e.id, s.b])).rejects.toThrow(/entry_already_settled/);
+    });
+
+    it('marks a pending deposit failed without moving money, and refuses a late success', async () => {
+      const u = await user();
+      const geo = (await one<{ id: string }>(`insert into public.geo_checks (user_id, action, region, country, provider, decision) values ($1, 'deposit', 'NJ', 'US', 'test', 'allow') returning id`, [u]))!.id;
+      const pay = (await one<{ id: string }>(`select * from public.start_deposit($1, 2500, 'sandbox', 'dep:stale-1', $2)`, [u, geo]))!;
+      await q(`select public.set_payment_ref($1, 'sbx_stale_1')`, [pay.id]);
+      await q(`select public.fail_pending_deposit($1, 'processor confirmed abandoned', 'operator:ops')`, [pay.id]);
+      expect(await one(`select status from public.payments where id = $1`, [pay.id])).toEqual({ status: 'failed' });
+      expect(await one(`select public.process_payment_event('sandbox', 'evt_late_1', 'deposit.succeeded', 'sbx_stale_1', 2500, '{}') as r`)).toEqual({ r: 'invalid_state:failed' });
+      expect((await wallet(u)).available).toBe(0);
+      await expect(q(`select public.fail_pending_deposit($1, 'again', 'operator:ops')`, [pay.id])).rejects.toThrow(/deposit_not_pending/);
+    });
+
+    it('lists a player’s sessions without exposing them to players', async () => {
+      const u = await user();
+      await q(`insert into auth.sessions (user_id, user_agent, ip) values ($1, 'Mozilla/5.0 test', '203.0.113.9')`, [u]);
+      const rows = await q<{ s: Record<string, unknown> }>(`select public.player_sessions($1) as s`, [u]);
+      expect(rows[0].s).toMatchObject({ user_agent: 'Mozilla/5.0 test', ip: '203.0.113.9' });
     });
   });
 

@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto
 import { db, limitMessage, rateLimit } from './supabase.js';
 import { GEO_MESSAGES, checkLocation } from './geo.js';
 import { loadProfile, recordDevice, requirePlayer } from './rm.js';
+import { pendingDeposits } from './console.js';
 
 /**
  * Payments (phase 4). The processor sits behind PaymentProvider so a gaming-approved
@@ -355,6 +356,7 @@ export async function paymentsView(emails: Map<string, string>) {
     }),
     recent: (recent.data ?? []).map((p) => ({ ...p, email: emails.get(p.user_id as string) ?? p.user_id })),
     reconciliation: recon.data ?? [],
+    pendingDeposits: await pendingDeposits(emails),
   };
 }
 
