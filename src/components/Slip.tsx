@@ -195,6 +195,14 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
       {!validation.ok && !(realMoney && !session) && (
         <p className="ticket-error" role="alert">
           {validation.errors[0]}
+          {realMoney && validation.errors[0] === 'Insufficient balance.' && (
+            <>
+              {' '}
+              <a href="/account#wallet" className="text-btn">
+                Add funds
+              </a>
+            </>
+          )}
         </p>
       )}
 

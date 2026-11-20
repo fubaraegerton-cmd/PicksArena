@@ -4,7 +4,7 @@ import { useStore } from '../store';
 import { SPORTS, sportById } from '../data/sports';
 import type { AdminAction, AdminData, AdminGame, AdminPick, AdminSport, AdminTeam } from '../shared/admin';
 import { EMPTY_DATA, lineError } from '../shared/admin';
-import { AdminError, adminCompliance, adminCompliancePost, adminDo, adminLogin, rememberPassword, savedPassword, type ComplianceData } from '../lib/adminApi';
+import { AdminError, adminCompliance, adminCompliancePost, adminDo, adminLogin, adminPayments, adminPaymentsPost, rememberPassword, savedPassword, type ComplianceData, type PaymentsData } from '../lib/adminApi';
 import { REAL_MONEY, supabase } from '../lib/supabase';
 
 /** In real-money mode the dashboard authenticates with the signed-in operator's session, checked server-side. */
@@ -205,6 +205,195 @@ function ComplianceTab({ notify }: { notify: (m: string) => void }) {
   );
 }
 
+const usd = (c: number | null | undefined) => (c == null ? '—' : `$${(Number(c) / 100).toFixed(2)}`);
+const ISSUE_LABEL: Record<string, string> = {
+  missing_internally: 'Settled by the processor but not completed here',
+  amount_mismatch: 'Amounts disagree',
+  missing_at_provider: 'Completed here but missing from the processor report',
+  ledger_missing: 'Completed payment with no ledger transaction',
+};
+
+function PaymentsTab({ notify }: { notify: (m: string) => void }) {
+  const [d, setD] = useState<PaymentsData | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [csv, setCsv] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setD(await adminPayments((await operatorToken()) ?? ''));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const act = async (body: Record<string, unknown>) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await adminPaymentsPost((await operatorToken()) ?? '', body);
+      setD(r.payments);
+      notify(r.note);
+      return true;
+    } catch (e) {
+      setErr((e as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!d) return <p className="muted">{err ?? 'Loading payments…'}</p>;
+
+  return (
+    <div className="adm-stack">
+      {!d.provider && <p className="adm-banner">No payment processor is connected, so deposits and withdrawals are closed. Set PAYMENTS_PROVIDER in Vercel.</p>}
+      {d.sandbox && <p className="adm-banner">Sandbox processor: test payments only. No real money moves. Turn this off before launch.</p>}
+      {err && <p className="ticket-error">{err}</p>}
+
+      <section className="adm-card">
+        <header className="adm-card-head">
+          <h2>Withdrawals to review</h2>
+          <span className="muted">{d.withdrawalQueue.length} waiting</span>
+        </header>
+        {d.withdrawalQueue.length === 0 ? (
+          <p className="adm-empty">Nothing waiting.</p>
+        ) : (
+          <ul className="adm-rows">
+            {d.withdrawalQueue.map((w) => {
+              const flags = Object.keys(w.profile?.flags ?? {}).filter((k) => w.profile?.flags[k] === true);
+              return (
+                <li key={w.id} className="adm-row">
+                  <div className="adm-row-main">
+                    <span className="pick-title">
+                      <strong>{usd(w.amount_cents)}</strong>
+                      <span>{w.email}</span>
+                    </span>
+                    <span className="wd-context">
+                      <span>To <b>{w.payment_methods?.label ?? 'unknown method'}</b></span>
+                      <span>ID check <b>{w.profile?.kyc_status ?? 'none'}</b></span>
+                      <span>State <b>{w.profile?.state ?? '—'}</b></span>
+                      <span>Available <b>{usd(w.wallet?.available_cents)}</b></span>
+                      <span>Deposited <b>{usd(w.deposited_cents)}</b></span>
+                      <span>Withdrawn <b>{usd(w.withdrawn_cents)}</b></span>
+                      {flags.length > 0 && <span className="neg">Flags: {flags.join(', ')}</span>}
+                    </span>
+                    <span className="muted small">Requested {new Date(w.created_at).toLocaleString()}</span>
+                  </div>
+                  <div className="adm-row-actions">
+                    <button type="button" className="pill-btn sm" disabled={busy} onClick={() => act({ action: 'reviewWithdrawal', paymentId: w.id, approve: true })}>
+                      Approve and pay
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-sm"
+                      disabled={busy}
+                      onClick={() => {
+                        const reason = prompt('Reason for declining (the player sees this):');
+                        if (reason) act({ action: 'reviewWithdrawal', paymentId: w.id, approve: false, reason });
+                      }}
+                    >
+                      Decline
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
+
+      <section className="adm-card">
+        <header className="adm-card-head wrap">
+          <h2>Reconciliation</h2>
+          {d.reconciliation.length === 0 ? <span className="recon-ok">Everything matches</span> : <span className="neg">{d.reconciliation.length} to look at</span>}
+        </header>
+        {d.reconciliation.length > 0 && (
+          <table className="sport-table geo-table">
+            <thead>
+              <tr>
+                <th scope="col">Issue</th>
+                <th scope="col">Processor ref</th>
+                <th scope="col">Ours</th>
+                <th scope="col">Theirs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.reconciliation.map((r, i) => (
+                <tr key={i}>
+                  <td>{ISSUE_LABEL[r.issue] ?? r.issue}</td>
+                  <td>{r.provider_ref}</td>
+                  <td>{usd(r.ours_cents)}</td>
+                  <td>{usd(r.theirs_cents)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <p className="muted small">Import the processor’s settlement report to compare it with your payments and the ledger. Paste CSV as <code>ref,deposit|withdrawal,amount_cents</code>, or pull it straight from the processor if it supports that.</p>
+        <textarea className="recon-csv" value={csv} onChange={(e) => setCsv(e.target.value)} placeholder="sbx_dep_…,deposit,5000" aria-label="Settlement report CSV" />
+        <div className="adm-row-actions">
+          <button type="button" className="pill-btn sm" disabled={busy || !csv.trim()} onClick={async () => (await act({ action: 'importSettlements', csv })) && setCsv('')}>
+            Import CSV
+          </button>
+          {d.provider && (
+            <button type="button" className="ghost-sm" disabled={busy} onClick={() => act({ action: 'importSettlements' })}>
+              Pull report from {d.provider}
+            </button>
+          )}
+        </div>
+      </section>
+
+      <section className="adm-card">
+        <header className="adm-card-head">
+          <h2>Recent payments</h2>
+          <button type="button" className="text-btn" onClick={load}>
+            Refresh
+          </button>
+        </header>
+        {d.recent.length === 0 ? (
+          <p className="adm-empty">No payments yet.</p>
+        ) : (
+          <ul className="adm-rows">
+            {d.recent.map((p) => (
+              <li key={p.id} className="adm-row">
+                <div className="adm-row-main">
+                  <span className="pick-title">
+                    <strong>
+                      {p.direction === 'deposit' ? 'Deposit' : 'Withdrawal'} {usd(p.amount_cents)}
+                    </strong>
+                    <span className={`pay-status s-${p.status}`}>{p.status}</span>
+                  </span>
+                  <span className="muted small">
+                    {p.email}, {new Date(p.created_at).toLocaleString()}
+                    {p.reviewed_by ? `, reviewed by ${p.reviewed_by}` : ''}
+                    {p.failure_reason ? `. ${p.failure_reason}` : ''}
+                  </span>
+                </div>
+                {d.sandbox && p.direction === 'deposit' && p.status === 'succeeded' && (
+                  <div className="adm-row-actions">
+                    <button
+                      type="button"
+                      className="ghost-sm"
+                      disabled={busy}
+                      onClick={() => confirm('Simulate a chargeback? The player’s account is frozen and unspent cash is clawed back.') && act({ action: 'simulateChargeback', paymentId: p.id })}
+                    >
+                      Simulate chargeback
+                    </button>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  );
+}
+
 function CreditFunds({ run }: { run: (body: Record<string, unknown>) => Promise<boolean> }) {
   const [email, setEmail] = useState('');
   const [amount, setAmount] = useState('');
@@ -249,7 +438,7 @@ function CreditFunds({ run }: { run: (body: Record<string, unknown>) => Promise<
 import { gameTime } from '../lib/format';
 import { Icon } from '../components/Icon';
 
-type Tab = 'overview' | 'games' | 'picks' | 'compliance';
+type Tab = 'overview' | 'games' | 'picks' | 'payments' | 'compliance';
 type Phase = 'live' | 'upcoming' | 'final' | 'cancelled';
 
 const phaseOf = (g: AdminGame, now: number): Phase =>
@@ -965,7 +1154,7 @@ export function Admin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const tab = ([...['overview', 'games', 'picks'], ...(REAL_MONEY ? ['compliance'] : [])].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as Tab;
+  const tab = ([...['overview', 'games', 'picks'], ...(REAL_MONEY ? ['payments', 'compliance'] : [])].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as Tab;
   const gameFilter = params.get('game');
 
   const go = useCallback(
@@ -1132,9 +1321,9 @@ export function Admin() {
       )}
 
       <div className="seg seg-tabs adm-tabs" role="tablist">
-        {(['overview', 'games', 'picks', ...(REAL_MONEY ? ['compliance'] : [])] as Tab[]).map((t) => (
+        {(['overview', 'games', 'picks', ...(REAL_MONEY ? ['payments', 'compliance'] : [])] as Tab[]).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => go(t)}>
-            {t === 'overview' ? 'Overview' : t === 'games' ? 'Games' : t === 'picks' ? 'Picks' : 'Compliance'}
+            {t === 'overview' ? 'Overview' : t === 'games' ? 'Games' : t === 'picks' ? 'Picks' : t === 'payments' ? 'Payments' : 'Compliance'}
             <span className="cnt">{t === 'games' ? data.games.length : t === 'picks' ? data.picks.length : ''}</span>
           </button>
         ))}
@@ -1159,6 +1348,7 @@ export function Admin() {
         </div>
       )}
       {tab === 'compliance' && REAL_MONEY && <ComplianceTab notify={notify} />}
+      {tab === 'payments' && REAL_MONEY && <PaymentsTab notify={notify} />}
       {tab === 'games' && <GamesTab data={data} now={now} run={run} busy={busy} go={go} />}
       {tab === 'picks' && (
         <PicksTab

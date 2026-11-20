@@ -4,6 +4,7 @@ import { haptic, useInstallPrompt, useTheme, type ThemePref } from '../lib/devic
 import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { getKyc, startKyc, type KycStatus } from '../lib/supabase';
+import { WalletPanel } from '../components/WalletPanel';
 
 const KYC_COPY: Record<KycStatus, string> = {
   none: 'Needed before your first withdrawal. It takes about two minutes: a photo of your ID and a quick selfie.',
@@ -98,11 +99,11 @@ export function Account() {
           {money(wallet?.inPlay ?? 0)} in {open.length} open entr{open.length === 1 ? 'y' : 'ies'}
           {wallet?.held ? `, ${money(wallet.held)} held for withdrawal` : ''}
         </span>
-        <p className="wallet-fine">
-          Deposits and withdrawals open once the payment provider is connected. Every movement of your money is recorded on your account’s ledger.
-        </p>
+        <p className="wallet-fine">Every movement of your money is recorded on your account’s ledger.</p>
       </section>
       )}
+
+      {realMoney && session && <WalletPanel />}
 
       {!realMoney && (
       <section className="wallet-card">

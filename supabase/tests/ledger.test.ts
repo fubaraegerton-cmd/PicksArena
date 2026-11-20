@@ -92,7 +92,7 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
     await admin.end();
     db = new pg.Pool({ host: HOST, port: PORT, user: USER, database: DB, max: 6 });
     await db.query(read('tests/supabase_shim.sql'));
-    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates'])
+    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments'])
       await db.query(read(`migrations/${m}.sql`));
     await db.query(`update public.jurisdictions set enabled = true where state in ('NJ', 'PA')`);
   });
@@ -488,6 +488,179 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
       expect((await one<{ s: boolean }>(`select public.record_device($1, $2) as s`, [b, hash]))!.s).toBe(true);
       const flags = await q<{ f: string }>(`select flags->>'shared_device' as f from public.profiles where id = any($1)`, [[a, b]]);
       expect(flags.map((r) => r.f)).toEqual(['true', 'true']);
+    });
+  });
+
+  describe('phase 4: deposits, withdrawals, webhooks, reconciliation', () => {
+    async function geoFor(u: string, action: 'deposit' | 'withdrawal', region = 'NJ') {
+      return (await one<{ id: string }>(
+        `insert into public.geo_checks (user_id, action, region, country, provider, decision) values ($1, $2, $3, 'US', 'test', 'allow') returning id`,
+        [u, action, region],
+      ))!.id;
+    }
+    async function startDeposit(u: string, cents: number) {
+      const p = (await one<{ id: string }>(`select * from public.start_deposit($1, $2, 'sandbox', $3, $4)`, [u, cents, `dep:${randomUUID()}`, await geoFor(u, 'deposit')]))!;
+      const ref = `sbx_${randomUUID()}`;
+      await q(`select public.set_payment_ref($1, $2)`, [p.id, ref]);
+      return { id: p.id, ref };
+    }
+    const event = (type: string, ref: string, cents: number | null, extra: { eventId?: string; token?: string; reason?: string } = {}) =>
+      one<{ r: string }>(
+        `select public.process_payment_event('sandbox', $1, $2, $3, $4, '{}'::jsonb, $5, 'card', 'Visa •••• 4242', null, $6) as r`,
+        [extra.eventId ?? `evt_${randomUUID()}`, type, ref, cents, extra.token ?? null, extra.reason ?? null],
+      ).then((x) => x!.r);
+    const status = async (id: string) => (await one<{ status: string; failure_reason: string | null }>(`select status, failure_reason from public.payments where id = $1`, [id]))!;
+    async function fundedVerified(cents = 10_000) {
+      const u = await user();
+      await q(`update public.profiles set kyc_status = 'approved' where id = $1`, [u]);
+      const d = await startDeposit(u, cents);
+      const token = `tok_${randomUUID()}`;
+      expect(await event('deposit.succeeded', d.ref, cents, { token })).toBe('credited');
+      const method = (await one<{ id: string }>(`select id from public.payment_methods where provider_token = $1`, [token]))!.id;
+      return { u, method, deposit: d };
+    }
+    const withdraw = async (u: string, method: string, cents: number) =>
+      (await one<{ id: string; status: string }>(`select * from public.request_withdrawal($1, $2, $3, $4, $5)`, [u, cents, method, `wd:${randomUUID()}`, await geoFor(u, 'withdrawal')]))!;
+
+    it('credits a deposit only from a verified provider event, exactly once', async () => {
+      const u = await user();
+      const d = await startDeposit(u, 5_000);
+      expect((await wallet(u)).available).toBe(0); // created ≠ paid
+      expect(await event('deposit.succeeded', d.ref, 5_000, { eventId: 'evt_dup_1', token: `tok_${randomUUID()}` })).toBe('credited');
+      expect(await event('deposit.succeeded', d.ref, 5_000, { eventId: 'evt_dup_1' })).toBe('duplicate');
+      expect(await event('deposit.succeeded', d.ref, 5_000)).toBe('already_applied');
+      expect((await wallet(u)).available).toBe(5_000);
+      expect((await status(d.id)).status).toBe('succeeded');
+    });
+
+    it('refuses to credit when the provider amount differs from the deposit created', async () => {
+      const u = await user();
+      const d = await startDeposit(u, 5_000);
+      expect(await event('deposit.succeeded', d.ref, 500_000)).toBe('amount_mismatch');
+      expect((await wallet(u)).available).toBe(0);
+      expect((await status(d.id)).status).toBe('failed');
+    });
+
+    it('records events for unknown payments without moving money', async () => {
+      expect(await event('deposit.succeeded', 'sbx_not_ours', 5_000)).toBe('unknown_payment');
+    });
+
+    it('gates deposits on location, limits, self-exclusion and holds', async () => {
+      const u = await user();
+      await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:no-geo-1', 99999999)`, [u])).rejects.toThrow(/location_check_required/);
+      await expect(q(`select public.start_deposit($1, 500, 'sandbox', 'dep:too-small', $2)`, [u, await geoFor(u, 'deposit')])).rejects.toThrow(/deposit_below_minimum/);
+      await expect(q(`select public.start_deposit($1, 300000, 'sandbox', 'dep:too-big', $2)`, [u, await geoFor(u, 'deposit')])).rejects.toThrow(/deposit_above_maximum/);
+      await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:ca-1', $2)`, [u, await geoFor(u, 'deposit', 'CA')])).rejects.toThrow(/location_not_eligible/);
+      await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:wrong-action', $2)`, [u, await geoFor(u, 'withdrawal')])).rejects.toThrow(/location_check_required/);
+      await q(`update public.profiles set self_exclusion_until = now() + interval '1 day' where id = $1`, [u]);
+      await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:excluded', $2)`, [u, await geoFor(u, 'deposit')])).rejects.toThrow(/self_excluded/);
+      await q(`update public.profiles set self_exclusion_until = null, flags = '{"blocked": true}' where id = $1`, [u]);
+      await expect(q(`select public.start_deposit($1, 5000, 'sandbox', 'dep:blocked', $2)`, [u, await geoFor(u, 'deposit')])).rejects.toThrow(/account_blocked/);
+    });
+
+    it('withdraws only after KYC, only to a method the player deposited with', async () => {
+      const { u, method } = await fundedVerified();
+      const other = await fundedVerified();
+      await expect(withdraw(u, other.method, 1_000)).rejects.toThrow(/method_not_found/);
+      await q(`update public.profiles set kyc_status = 'pending' where id = $1`, [u]);
+      await expect(withdraw(u, method, 1_000)).rejects.toThrow(/kyc_required/);
+      await q(`update public.profiles set kyc_status = 'approved' where id = $1`, [u]);
+      const fresh = (await one<{ id: string }>(
+        `insert into public.payment_methods (user_id, provider, provider_token, kind, label) values ($1, 'sandbox', $2, 'bank', 'Never used') returning id`,
+        [u, `tok_${randomUUID()}`],
+      ))!.id;
+      await expect(withdraw(u, fresh, 1_000)).rejects.toThrow(/method_not_verified/);
+      await expect(withdraw(u, method, 20_000)).rejects.toThrow(/insufficient_funds/);
+      const w = await withdraw(u, method, 4_000);
+      expect(w.status).toBe('requested');
+      const wl = await one<{ available_cents: string; held_cents: string }>(`select * from public.wallets where user_id = $1`, [u]);
+      expect([Number(wl!.available_cents), Number(wl!.held_cents)]).toEqual([6_000, 4_000]);
+    });
+
+    it('cancel and reject return held money; approve + payout pays it out', async () => {
+      const { u, method } = await fundedVerified();
+      const a = await withdraw(u, method, 2_000);
+      await q(`select public.cancel_withdrawal($1, $2)`, [u, a.id]);
+      expect((await status(a.id)).status).toBe('cancelled');
+      const b = await withdraw(u, method, 2_000);
+      await expect(q(`select public.review_withdrawal($1, false, '', 'op')`, [b.id])).rejects.toThrow(/reason required/);
+      await q(`select public.review_withdrawal($1, false, 'name mismatch', 'op')`, [b.id]);
+      expect(await status(b.id)).toEqual({ status: 'rejected', failure_reason: 'name mismatch' });
+      expect((await wallet(u)).available).toBe(10_000);
+
+      const c = await withdraw(u, method, 3_000);
+      await q(`select public.review_withdrawal($1, true, null, 'op')`, [c.id]);
+      const ref = `po_${randomUUID()}`;
+      await q(`select public.set_payment_ref($1, $2)`, [c.id, ref]);
+      expect(await event('payout.paid', ref, 9_999)).toBe('amount_mismatch');
+      expect(await event('payout.paid', ref, 3_000)).toBe('paid');
+      expect(await event('payout.paid', ref, 3_000)).toBe('already_applied');
+      const wl = await one<{ available_cents: string; held_cents: string }>(`select * from public.wallets where user_id = $1`, [u]);
+      expect([Number(wl!.available_cents), Number(wl!.held_cents)]).toEqual([7_000, 0]);
+
+      const d = await withdraw(u, method, 1_000);
+      await q(`select public.review_withdrawal($1, true, null, 'op')`, [d.id]);
+      const ref2 = `po_${randomUUID()}`;
+      await q(`select public.set_payment_ref($1, $2)`, [d.id, ref2]);
+      expect(await event('payout.failed', ref2, 1_000, { reason: 'account closed' })).toBe('released');
+      expect((await wallet(u)).available).toBe(7_000);
+      await expect(q(`select public.cancel_withdrawal($1, $2)`, [u, d.id])).rejects.toThrow(/withdrawal_not_cancellable/);
+    });
+
+    it('a chargeback freezes the account and claws back unspent cash', async () => {
+      const s = await slate();
+      const { u, deposit, method } = await fundedVerified(5_000);
+      await place(u, [{ id: s.a, d: 'more' }, { id: s.b, d: 'less' }], 3_000);
+      expect(await event('deposit.reversed', deposit.ref, 5_000)).toBe('reversed');
+      expect((await wallet(u)).available).toBe(0);
+      expect((await status(deposit.id)).failure_reason).toMatch(/clawed back 2000 of 5000 cents; shortfall 3000/);
+      expect(await one(`select flags->>'blocked' as b, flags->>'chargeback' as c from public.profiles where id = $1`, [u])).toEqual({ b: 'true', c: 'true' });
+      expect(await one(`select status from public.payment_methods where id = $1`, [method])).toEqual({ status: 'blocked' });
+      await expect(place(u, [{ id: s.a, d: 'more' }, { id: s.b, d: 'less' }], 100)).rejects.toThrow(/account_blocked/);
+    });
+
+    it('reconciles the provider report against payments and the ledger', async () => {
+      const { deposit } = await fundedVerified(5_000);
+      await q(`delete from public.provider_settlements`);
+      expect(await q(`select * from public.reconcile_payments()`)).toEqual([]);
+      await q(`insert into public.provider_settlements (provider, provider_ref, direction, amount_cents) select provider, provider_ref, direction, amount_cents from public.payments where status in ('succeeded','paid','reversed')`);
+      expect(await q(`select * from public.reconcile_payments()`)).toEqual([]);
+      await q(`update public.provider_settlements set amount_cents = 4_999 where provider_ref = $1`, [deposit.ref]);
+      await q(`insert into public.provider_settlements (provider, provider_ref, direction, amount_cents) values ('sandbox', 'sbx_ghost', 'deposit', 7_500)`);
+      await q(`delete from public.provider_settlements where provider_ref = (select provider_ref from public.payments where status = 'paid' limit 1)`);
+      const issues = (await q<{ issue: string; provider_ref: string }>(`select issue, provider_ref from public.reconcile_payments()`)).map((r) => r.issue);
+      expect(issues).toEqual(expect.arrayContaining(['amount_mismatch', 'missing_internally', 'missing_at_provider']));
+      await q(`delete from public.provider_settlements`);
+    });
+
+    it('keeps webhook events append-only and hides provider tokens from players', async () => {
+      const { u } = await fundedVerified(2_000);
+      await expect(q(`delete from public.payment_events`)).rejects.toThrow(/append-only/);
+      await expect(q(`update public.payment_events set result = 'x'`)).rejects.toThrow(/append-only/);
+      await expect(q(`truncate public.payment_events`)).rejects.toThrow(/append-only/);
+      const c = await db.connect();
+      try {
+        await c.query('begin');
+        await c.query(`select set_config('request.jwt.claim.sub', $1, true)`, [u]);
+        await c.query('set local role authenticated');
+        const tryQ = async (sql: string) => {
+          await c.query('savepoint t');
+          try {
+            return (await c.query(sql)).rows;
+          } catch (e) {
+            await c.query('rollback to savepoint t');
+            throw e;
+          }
+        };
+        expect(await tryQ(`select label, status from public.payment_methods`)).toEqual([{ label: 'Visa •••• 4242', status: 'active' }]);
+        await expect(tryQ(`select provider_token from public.payment_methods`)).rejects.toThrow(/permission denied/);
+        expect(await tryQ(`select direction, amount_cents, status from public.payments`)).toEqual([{ direction: 'deposit', amount_cents: '2000', status: 'succeeded' }]);
+        await expect(tryQ(`select provider_ref from public.payments`)).rejects.toThrow(/permission denied/);
+        await expect(tryQ(`select public.process_payment_event('sandbox','x','deposit.succeeded','y',1,'{}')`)).rejects.toThrow(/permission denied/);
+      } finally {
+        await c.query('rollback');
+        c.release();
+      }
     });
   });
 

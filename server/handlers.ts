@@ -4,6 +4,7 @@ import { loadData, saveData, storageMode } from './storage.js';
 import { db, supabaseConfigured } from './supabase.js';
 import { OperatorError, applySlateAction, loadSlate } from './slate.js';
 import { applyDecision } from './kyc.js';
+import { PaymentsOperatorError, importSettlements, paymentsView, reviewWithdrawal, simulateChargeback } from './payments.js';
 
 const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -61,6 +62,7 @@ export async function adminGET(req: Request): Promise<Response> {
   if (err) return err;
   try {
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'compliance') return json(await complianceView());
+    if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'payments') return json(await paymentsView(await emailsById()));
     if (supabaseConfigured()) return json({ data: await loadSlate('operator'), storage: 'supabase' });
     return json({ data: await loadData(), storage: storageMode() });
   } catch (e) {
@@ -83,6 +85,23 @@ export async function adminPOST(req: Request): Promise<Response> {
       const act = (body as unknown as { action: string }).action;
       const by = (await operatorEmail(req)) ?? 'admin-password';
       if (act === 'creditFunds') return await creditFunds(body as unknown as CreditFunds);
+      if (act === 'reviewWithdrawal' || act === 'importSettlements' || act === 'simulateChargeback') {
+        const b = body as unknown as { paymentId?: string; approve?: boolean; reason?: string; csv?: string };
+        try {
+          let note = 'Saved';
+          if (act === 'reviewWithdrawal') {
+            await reviewWithdrawal(String(b.paymentId), !!b.approve, b.reason, `operator:${by}`);
+            note = b.approve ? 'Withdrawal approved and sent for payout' : 'Withdrawal rejected and funds returned';
+          } else if (act === 'importSettlements') note = `Imported ${await importSettlements(b.csv, by)} settlement rows`;
+          else {
+            await simulateChargeback(String(b.paymentId));
+            note = 'Chargeback simulated';
+          }
+          return json({ ok: true, note, payments: await paymentsView(await emailsById()) });
+        } catch (e) {
+          return json({ error: (e as Error).message }, e instanceof PaymentsOperatorError ? 422 : 500);
+        }
+      }
       if (act === 'setJurisdiction' || act === 'kycDecision' || act === 'setBlocked')
         return await complianceAction(body as unknown as ComplianceAction, by);
       await applySlateAction(body);

@@ -1611,3 +1611,28 @@ li.void .ep-res { width: auto; padding: 0 6px; border-radius: 6px; background: v
 .jur-grid select { height: 32px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 14px; }
 .geo-table td, .geo-table th { font-size: 13px; height: 42px; }
 .kyc-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }
+
+/* ----- Wallet (real money) ----- */
+.wallet-buttons { display: flex; gap: 8px; margin-bottom: 10px; }
+.wallet-buttons .pill-btn { display: inline-flex; align-items: center; gap: 6px; height: 40px; background: var(--volt); color: var(--on-volt); }
+.wallet-buttons .ghost-sm { height: 40px; }
+.wallet-buttons .ghost-sm.on { border-color: var(--ink); }
+.wallet-form { margin-bottom: 12px; }
+.adm-banner.ok { border-style: solid; border-color: var(--hit); }
+.pay-history { list-style: none; margin: 0; padding: 0; display: grid; }
+.pay-history li { display: grid; grid-template-columns: 32px 1fr auto auto; align-items: center; gap: 10px; padding: 10px 0; border-top: 1px solid var(--line); }
+.pay-history li > div { display: grid; min-width: 0; }
+.pay-dir { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 10px; background: var(--surface-2); }
+.pay-dir.deposit { background: var(--volt); color: var(--on-volt); }
+.pay-status { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); white-space: nowrap; }
+.pay-status.s-succeeded, .pay-status.s-paid { background: color-mix(in srgb, var(--hit) 18%, transparent); color: var(--hit); }
+.pay-status.s-failed, .pay-status.s-rejected, .pay-status.s-reversed { background: color-mix(in srgb, var(--miss) 14%, transparent); color: var(--miss); }
+.sandbox-checkout { text-align: center; justify-items: center; }
+.sandbox-checkout .field { width: 100%; text-align: left; }
+.sandbox-badge { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 999px; border: 1.5px dashed var(--line-strong); color: var(--ink-2); }
+.sandbox-amount { font-size: 56px; font-weight: 800; font-stretch: 62%; line-height: 1; }
+.recon-ok { color: var(--hit); font-weight: 700; }
+.wd-context { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--muted); }
+.wd-context b { color: var(--ink); }
+.recon-csv { width: 100%; min-height: 90px; font: 13px/1.4 ui-monospace, monospace; padding: 10px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink); }
+.adm-tabs { max-width: 680px; }

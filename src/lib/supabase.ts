@@ -196,3 +196,57 @@ export async function fetchEntries(): Promise<Entry[]> {
     }),
   }));
 }
+
+// ---------- payments (phase 4) ----------
+export const startDeposit = (amountCents: number, idempotencyKey: string) =>
+  call<{ redirectUrl: string; paymentId: string }>('/api/pay/deposit', {
+    method: 'POST',
+    body: JSON.stringify({ amount_cents: amountCents, idempotency_key: idempotencyKey }),
+  });
+export const requestWithdrawal = (amountCents: number, methodId: string, idempotencyKey: string) =>
+  call<{ payment: { id: string; status: string } }>('/api/pay/withdraw', {
+    method: 'POST',
+    body: JSON.stringify({ amount_cents: amountCents, method_id: methodId, idempotency_key: idempotencyKey }),
+  });
+export const cancelWithdrawal = (paymentId: string) =>
+  call<{ ok: true }>('/api/pay/withdraw-cancel', { method: 'POST', body: JSON.stringify({ payment_id: paymentId }) });
+export const completeSandboxCheckout = (ref: string, outcome: 'approve' | 'decline', last4: string) =>
+  call<{ status: number; results: unknown }>('/api/pay/sandbox', { method: 'POST', body: JSON.stringify({ ref, outcome, last4 }) });
+
+export interface PaymentRow {
+  id: string;
+  direction: 'deposit' | 'withdrawal';
+  amount: number;
+  status: string;
+  methodId: string | null;
+  failureReason: string | null;
+  createdAt: number;
+}
+export interface PaymentMethodRow {
+  id: string;
+  kind: string;
+  label: string;
+  status: string;
+}
+
+/** The player's payment history and saved methods (RLS: own rows, safe columns only). */
+export async function fetchPayments(): Promise<{ payments: PaymentRow[]; methods: PaymentMethodRow[] }> {
+  const [p, m] = await Promise.all([
+    supabase!.from('payments').select('id, direction, amount_cents, status, method_id, failure_reason, created_at').order('created_at', { ascending: false }).limit(50),
+    supabase!.from('payment_methods').select('id, kind, label, status'),
+  ]);
+  if (p.error) throw new Error(p.error.message);
+  if (m.error) throw new Error(m.error.message);
+  return {
+    payments: (p.data ?? []).map((r) => ({
+      id: r.id,
+      direction: r.direction,
+      amount: Number(r.amount_cents) / 100,
+      status: r.status,
+      methodId: r.method_id,
+      failureReason: r.failure_reason,
+      createdAt: Date.parse(r.created_at),
+    })),
+    methods: (m.data ?? []) as PaymentMethodRow[],
+  };
+}

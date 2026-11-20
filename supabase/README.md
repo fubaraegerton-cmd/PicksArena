@@ -48,8 +48,17 @@ never run it against a real Supabase project.
 - `kyc_records` + `set_kyc_decision` — decisions only; one verified identity per account (unique index).
 - `devices` + `record_device` — accounts sharing a device are flagged; `flags.blocked` puts an account on hold.
 
+## Phase 4 — payments (`20261121000004_payments.sql`)
+
+- `payments`, `payment_methods` (tokens only), append-only `payment_events`, `provider_settlements`.
+- `start_deposit` → hosted checkout → `process_payment_event('deposit.succeeded')` credits only when
+  the amount matches; duplicate event ids return `duplicate`.
+- `request_withdrawal` (KYC + closed-loop method + location) → `review_withdrawal` → `payout.paid`;
+  `cancel_withdrawal`, decline and `payout.failed` return held funds.
+- `deposit.reversed` (chargeback) freezes the account and claws back unspent cash.
+- `reconcile_payments()` — processor report vs payments vs ledger; empty = healthy.
+
 ## Next phases
 
-4. deposits/withdrawals via a gaming-approved
-provider with verified webhooks and reconciliation · 5. limits, self-exclusion, audit log ·
+5. limits, self-exclusion, audit log ·
 6. operator console · 7. fraud and risk.

@@ -11,6 +11,7 @@ import { HowToPlay } from './pages/HowToPlay';
 import { Account } from './pages/Account';
 import { Admin } from './pages/Admin';
 import { Login } from './pages/Login';
+import { SandboxCheckout } from './pages/SandboxCheckout';
 
 const NAV: { to: string; label: string; icon: IconName; end?: boolean }[] = [
   { to: '/', label: 'Home', icon: 'home', end: true },
@@ -142,6 +143,7 @@ export default function App() {
           <Route path="/account" element={<Account />} />
           <Route path="/admin" element={<Admin />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/pay/sandbox" element={<SandboxCheckout />} />
           <Route path="*" element={<Home />} />
         </Routes>
       </main>

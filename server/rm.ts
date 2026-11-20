@@ -13,7 +13,7 @@ const US_STATES = new Set(
   'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY'.split(' '),
 );
 
-async function requirePlayer(req: Request) {
+export async function requirePlayer(req: Request) {
   if (!supabaseConfigured()) return { error: json({ error: 'Real-money play isn’t switched on.' }, 503) };
   const user = await playerFrom(req);
   if (!user) return { error: json({ error: 'Sign in to continue.' }, 401) };
@@ -29,7 +29,7 @@ interface ProfileRow {
   flags: Record<string, unknown>;
 }
 
-async function loadProfile(id: string): Promise<ProfileRow | null> {
+export async function loadProfile(id: string): Promise<ProfileRow | null> {
   const { data, error } = await db()
     .from('profiles')
     .select('id, dob, state, kyc_status, self_exclusion_until, flags')
@@ -45,7 +45,7 @@ async function minAge(home: string | null, located: string | null): Promise<numb
   return Number(data);
 }
 
-async function recordDevice(req: Request, userId: string) {
+export async function recordDevice(req: Request, userId: string) {
   const hash = deviceHash(req);
   if (hash) await db().rpc('record_device', { p_user: userId, p_device_hash: hash });
 }

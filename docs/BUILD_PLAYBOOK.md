@@ -28,7 +28,7 @@ ones being right.
 | 6 | Money core in Postgres (phases 1–2) | Ledger, entries, lock-at-start, auto-settlement |
 | 7 | Connect the app to Supabase | Real accounts, server-placed entries, live wallet |
 | 8 | Compliance gates (phase 3) | Geofence, age by state, identity checks, one account per person |
-| 9 | Payments (phase 4) | Deposits/withdrawals via a gaming-approved provider *(next)* |
+| 9 | Payments (phase 4) | Deposits/withdrawals behind a processor adapter, signed webhooks, reconciliation |
 | 10 | Responsible gaming + audit (phase 5) | Limits, self-exclusion, audit log, rate limits *(next)* |
 
 The single most important lesson: **build the money core and its tests before any payment or
@@ -171,6 +171,90 @@ inside a `DO` block that ends with `raise exception 'RESULT …'` so everything 
 **Testing trick:** `GEO_DEV_LOCATION=US-NJ` (ignored on Vercel) simulates location locally, so the
 same browser test can prove "allowed in NJ" and "blocked in CA".
 
+## 9. Payments (phase 4)
+
+Migration `supabase/migrations/…_payments.sql`, server `server/payments.ts`, UI `src/components/WalletPanel.tsx`
+and the operator **Payments** tab.
+
+1. **Tables:** `payments` (one row per deposit/withdrawal, strict status flow enforced by a CHECK),
+   `payment_methods` (processor tokens only — never card/account numbers), `payment_events`
+   (append-only log of every verified webhook; unique `(provider, event_id)` = exactly-once),
+   `provider_settlements` (the processor's settlement report, for reconciliation).
+2. **Deposit flow:** `start_deposit` (location, age, self-exclusion, hold and $10–$2,500 checks) →
+   processor hosted checkout → **signed webhook** → `process_payment_event` credits the ledger
+   only if the payment exists, is still `created`, and the reported amount equals the amount we
+   created. The browser redirect back never credits anything; the wallet polls until the webhook lands.
+3. **Withdrawal flow:** `request_withdrawal` needs location + KYC approved + a method the player has
+   successfully deposited with (closed loop); cash moves to `user_withdrawal_hold` → operator
+   reviews with full context → approve triggers the payout → `payout.paid` webhook moves hold →
+   clearing. Cancel/decline/`payout.failed` return the hold to cash.
+4. **Chargeback** (`deposit.reversed`): freeze the account, block the method, claw back
+   `min(available, amount)`, record the shortfall.
+5. **Reconciliation:** `reconcile_payments()` compares the processor report, our payments and the
+   ledger (`missing_internally`, `amount_mismatch`, `missing_at_provider`, `ledger_missing`);
+   `ledger_reconcile()` checks balances vs postings. Both should be empty.
+6. **Processor adapter** (`PaymentProvider`): `createCheckout`, `createPayout`, `parseWebhook`
+   (verify signature, normalise events), optional `settlementReport`. The built-in **sandbox**
+   processor implements it with a hosted checkout page (`/pay/sandbox`) and HMAC-signed webhooks
+   (`t=…,v1=…`, 5-minute replay window), so the whole path can be tested before a real processor
+   is chosen. It refuses to run on Vercel production unless explicitly allowed.
+
+**Adding a real processor:** implement `PaymentProvider` for it in `server/payments.ts`, register
+it in `providers`, map its webhook events to `deposit.succeeded | deposit.failed | deposit.reversed |
+payout.paid | payout.failed`, point its webhook at `/api/pay/webhook?provider=<name>`, set
+`PAYMENTS_PROVIDER=<name>` and its keys in Vercel. Test in its sandbox with the same browser script.
+
+**Bugs found in phase 4 testing:**
+- The dev API bridge built request URLs without the Host header, so redirect URLs lost the port.
+  Build absolute URLs from the incoming Host (Vercel already passes full URLs).
+- A row-level append-only trigger doesn't fire on an empty table — test guards after inserting
+  rows, and add statement-level TRUNCATE guards too.
+- In Postgres, one failed query aborts the whole transaction; use savepoints in tests that expect errors.
+
+**Decision:** abandoned checkouts stay `created` (shown as "Not completed" after 30 minutes)
+rather than being auto-failed — a processor can confirm late, and failing first would leave a
+player charged but not credited. Reconciliation surfaces any late settlement.
+
+---
+
+## Pre-launch: reset the database to a clean ledger
+
+Testing writes sandbox transactions to the append-only ledger, which can't be deleted row by row
+(by design). Before launch, while there are no real players, reset everything:
+
+1. In Supabase → **Authentication → Users**, delete the QA/test users (only test accounts exist pre-launch).
+2. Supabase → **SQL editor**, run: `drop schema public cascade; create schema public;
+   grant usage on schema public to anon, authenticated, service_role;`
+   then `delete from supabase_migrations.schema_migrations;`.
+3. Re-apply every file in `supabase/migrations/` in order (Management API or the SQL editor) and
+   record each version in `supabase_migrations.schema_migrations`.
+4. Re-enable your licensed states in **Admin → Compliance**; re-flag your operator account
+   (`app_metadata.role = 'operator'`).
+5. Run `select * from ledger_reconcile(); select * from reconcile_payments();` — both empty.
+
+Never do this after launch. From launch on, corrections are new ledger transactions, never edits.
+
+---
+
+## Decisions log
+
+| Decision | Why |
+|---|---|
+| Money rules in Postgres functions, not app code | One enforcement point; no app bug can bypass them |
+| Append-only double-entry ledger with idempotency keys | Every dollar traceable; retries can't double-post |
+| Integer cents everywhere | No floating-point money |
+| Lines snapshotted per pick | Later line edits never change placed entries |
+| Whole-number lines only in real money | Pushes are settled there; the demo has no push rules |
+| Operator = server-set role, not a shared password | Spec: role checked server-side |
+| Every state off by default; deny when location unknown | Fail closed |
+| Location check row required by `place_entry` / money functions | Database enforces the geofence |
+| Age = stricter of home state and current location | Covers travellers and residents |
+| KYC stores decision + salted identity hash only | Spec: store the decision, not documents |
+| Withdrawals closed-loop to deposited methods | Limits fraud and money laundering |
+| Credit only from signed webhooks with matching amount | Never trust redirects or client amounts |
+| Sandbox processor instead of guessing a real processor's API | Full path testable now; real one drops in behind the adapter |
+| Abandoned checkouts not auto-failed | Late confirmations must still credit |
+
 ---
 
 ## Working in a sandboxed cloud session (what to expect)
@@ -194,8 +278,12 @@ same browser test can prove "allowed in NJ" and "blocked in CA".
 6. Gate entries in the database on location, age and account status; log every decision.
 7. Keep providers (KYC, geolocation, payments) behind adapters; build against sandboxes.
 8. Never trust the client: it sends intent ("these picks, this stake"); the server computes money.
-9. Before going public: licensed states enabled, KYC + geolocation providers live, payments with
-   verified webhooks, responsible-gaming limits, audit log, custom SMTP, Vercel protection off.
+9. Payments: hosted checkout + signed webhooks only; exactly-once event log; closed-loop
+   withdrawals with operator review; chargeback freeze/claw-back; reconciliation against the
+   processor's report. Build against a sandbox processor first.
+10. Before going public: reset the pre-launch database, licensed states enabled, KYC +
+   geolocation + payment providers live, responsible-gaming limits, audit log, custom SMTP,
+   Vercel protection off.
 
 ## Environment variables
 
@@ -208,6 +296,9 @@ same browser test can prove "allowed in NJ" and "blocked in CA".
 | `KYC_HASH_SALT` | Vercel | Salt for identity fingerprints (set once, never change) |
 | `IPINFO_TOKEN`, `GEO_REQUIRE_VPN_CHECK` | Vercel | VPN/proxy detection |
 | `GEO_DEV_LOCATION` | local only | Simulate a location, e.g. `US-NJ` |
+| `PAYMENTS_PROVIDER` | Vercel | `sandbox` (testing) or a real processor; unset = deposits/withdrawals closed |
+| `PAYMENTS_SANDBOX_SECRET` | Vercel | Webhook signing secret for the sandbox (local dev has a default) |
+| `PAYMENTS_SANDBOX_ALLOW_PRODUCTION` | Vercel | `true` only for pre-launch testing behind Vercel protection |
 | `ADMIN_PASSWORD` | demo only | Legacy dashboard password when Supabase isn't configured |
 
 ## Commands

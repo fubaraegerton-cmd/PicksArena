@@ -14,7 +14,7 @@ function devApi(): Plugin {
     apply: 'serve',
     configureServer(server: ViteDevServer) {
       server.middlewares.use(async (req: IncomingMessage, res: ServerResponse, next) => {
-        const url = new URL(req.url ?? '/', 'http://localhost');
+        const url = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
         // Same routing as Vercel: /api/a/b -> api/a/b.ts
         if (!/^\/api\/[a-z0-9/_-]+$/i.test(url.pathname)) return next();
         const route = `${url.pathname}.ts`;

@@ -71,3 +71,29 @@ export function adminCompliance(credential: string) {
 export function adminCompliancePost(credential: string, body: Record<string, unknown>) {
   return callAt<{ ok: true; compliance: ComplianceData }>('/api/admin', credential, { method: 'POST', body: JSON.stringify(body) });
 }
+
+export interface PaymentsData {
+  sandbox: boolean;
+  provider: string | null;
+  withdrawalQueue: {
+    id: string;
+    email: string;
+    amount_cents: number;
+    created_at: string;
+    payment_methods: { label: string; status: string } | null;
+    profile?: { kyc_status: string; state: string | null; flags: Record<string, unknown> };
+    wallet?: { available_cents: number; held_cents: number };
+    deposited_cents: number;
+    withdrawn_cents: number;
+  }[];
+  recent: { id: string; email: string; direction: string; amount_cents: number; status: string; provider: string; provider_ref: string | null; failure_reason: string | null; created_at: string; reviewed_by: string | null }[];
+  reconciliation: { issue: string; payment_id: string | null; provider: string; provider_ref: string; ours_cents: number | null; theirs_cents: number | null }[];
+}
+
+export function adminPayments(credential: string) {
+  return callAt<PaymentsData>('/api/admin?view=payments', credential);
+}
+
+export function adminPaymentsPost(credential: string, body: Record<string, unknown>) {
+  return callAt<{ ok: true; note: string; payments: PaymentsData }>('/api/admin', credential, { method: 'POST', body: JSON.stringify(body) });
+}
