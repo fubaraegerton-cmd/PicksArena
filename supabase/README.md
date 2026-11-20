@@ -37,8 +37,19 @@ PA_TEST_PG_HOST=/path/to/socket-or-host PA_TEST_PG_PORT=5432 npm test
 `tests/supabase_shim.sql` stands in for Supabase's `auth` schema and roles on plain Postgres —
 never run it against a real Supabase project.
 
+## Phase 3 — compliance gates (`20261120000003_compliance_gates.sql`)
+
+- `jurisdictions` — every state, **all disabled by default**, with a minimum age. Managed in the
+  operator Compliance tab.
+- `geo_checks` — append-only log of every location decision. `place_entry(…, p_geo_check)` requires a
+  fresh (≤2 minutes) `allow` check for that player in an enabled state; the old function is renamed
+  `place_entry_unchecked` and nobody (not even `service_role`) can call it directly.
+- Age = stricter of home state and current location (`min_age_for`), re-checked on every entry.
+- `kyc_records` + `set_kyc_decision` — decisions only; one verified identity per account (unique index).
+- `devices` + `record_device` — accounts sharing a device are flagged; `flags.blocked` puts an account on hold.
+
 ## Next phases
 
-3. KYC, age (18+/21+ by state) and geofence gates · 4. deposits/withdrawals via a gaming-approved
+4. deposits/withdrawals via a gaming-approved
 provider with verified webhooks and reconciliation · 5. limits, self-exclusion, audit log ·
 6. operator console · 7. fraud and risk.

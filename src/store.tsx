@@ -149,7 +149,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (!REAL_MONEY || !supabase) return;
     refreshAccount();
     const { data } = supabase.auth.onAuthStateChange((event) => {
-      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') refreshAccount();
+      // Never call Supabase inside this callback: supabase-js holds its auth lock here and
+      // awaiting another auth call deadlocks. Defer to the next tick instead.
+      if (event === 'SIGNED_IN' || event === 'SIGNED_OUT' || event === 'USER_UPDATED') setTimeout(() => refreshAccount(), 0);
     });
     const id = setInterval(() => document.visibilityState === 'visible' && refreshAccount(), 30_000);
     return () => {

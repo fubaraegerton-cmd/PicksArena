@@ -1602,3 +1602,12 @@ li.void .ep-res { width: auto; padding: 0 6px; border-radius: 6px; background: v
 .hitstrip .push,
 .hitstrip .void { background: var(--line-strong); }
 .stamp.refunded { color: var(--muted); }
+.adm-tabs { max-width: 560px; }
+.jur-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 6px; }
+.jur-grid li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--line); }
+.jur-grid li.on { border-color: var(--ink); }
+.jur-grid .switch { padding: 0; gap: 10px; min-width: 0; }
+.jur-grid .switch strong { font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.jur-grid select { height: 32px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--line-strong); background: var(--surface); font-size: 14px; }
+.geo-table td, .geo-table th { font-size: 13px; height: 42px; }
+.kyc-status { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; }

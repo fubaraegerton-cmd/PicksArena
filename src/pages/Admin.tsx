@@ -4,13 +4,205 @@ import { useStore } from '../store';
 import { SPORTS, sportById } from '../data/sports';
 import type { AdminAction, AdminData, AdminGame, AdminPick, AdminSport, AdminTeam } from '../shared/admin';
 import { EMPTY_DATA, lineError } from '../shared/admin';
-import { AdminError, adminDo, adminLogin, rememberPassword, savedPassword } from '../lib/adminApi';
+import { AdminError, adminCompliance, adminCompliancePost, adminDo, adminLogin, rememberPassword, savedPassword, type ComplianceData } from '../lib/adminApi';
 import { REAL_MONEY, supabase } from '../lib/supabase';
 
 /** In real-money mode the dashboard authenticates with the signed-in operator's session, checked server-side. */
 async function operatorToken(): Promise<string | null> {
   if (!supabase) return null;
   return (await supabase.auth.getSession()).data.session?.access_token ?? null;
+}
+
+const DENY_LABEL: Record<string, string> = {
+  location_unknown: 'Location unknown',
+  outside_us: 'Outside the US',
+  state_not_eligible: 'State not enabled',
+  vpn_or_proxy: 'VPN or proxy',
+  vpn_check_unavailable: 'VPN check failed',
+};
+
+function ComplianceTab({ notify }: { notify: (m: string) => void }) {
+  const [c, setC] = useState<ComplianceData | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState<'enabled' | 'all'>('all');
+
+  const load = useCallback(async () => {
+    try {
+      setC(await adminCompliance((await operatorToken()) ?? ''));
+    } catch (e) {
+      setErr((e as Error).message);
+    }
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const act = async (body: Record<string, unknown>, done = 'Saved') => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await adminCompliancePost((await operatorToken()) ?? '', body);
+      setC(r.compliance);
+      notify(done);
+    } catch (e) {
+      setErr((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!c) return <p className="muted">{err ?? 'Loading compliance…'}</p>;
+  const enabled = c.jurisdictions.filter((j) => j.enabled);
+  const states = filter === 'enabled' ? enabled : c.jurisdictions;
+
+  return (
+    <div className="adm-stack">
+      {err && <p className="ticket-error">{err}</p>}
+      <div className="adm-cols">
+        <section className="adm-card">
+          <header className="adm-card-head">
+            <h2>Identity checks</h2>
+            <span className="muted">{c.kycQueue.length} waiting</span>
+          </header>
+          {c.kycQueue.length === 0 ? (
+            <p className="adm-empty">No identity checks waiting for review.</p>
+          ) : (
+            <ul className="adm-rows">
+              {c.kycQueue.map((k) => (
+                <li key={k.id} className="adm-row">
+                  <div className="adm-row-main">
+                    <strong>{k.email}</strong>
+                    <span className="muted small">
+                      {k.provider}, {k.status === 'review' ? 'needs review' : 'in progress'}, started {new Date(k.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="adm-row-actions">
+                    <button type="button" className="pill-btn sm" disabled={busy} onClick={() => act({ action: 'kycDecision', recordId: k.id, status: 'approved' }, 'Identity approved')}>
+                      Approve
+                    </button>
+                    <button
+                      type="button"
+                      className="ghost-sm"
+                      disabled={busy}
+                      onClick={() => {
+                        const reason = prompt('Reason for rejecting (shown in the audit trail):');
+                        if (reason) act({ action: 'kycDecision', recordId: k.id, status: 'rejected', reason }, 'Identity rejected');
+                      }}
+                    >
+                      Reject
+                    </button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+
+        <section className="adm-card">
+          <header className="adm-card-head">
+            <h2>Flagged accounts</h2>
+            <span className="muted">{c.flagged.length}</span>
+          </header>
+          {c.flagged.length === 0 ? (
+            <p className="adm-empty">No flagged accounts.</p>
+          ) : (
+            <ul className="adm-rows">
+              {c.flagged.map((f) => {
+                const blocked = f.flags.blocked === true;
+                const why = Object.keys(f.flags).filter((k) => ['shared_device', 'duplicate_identity'].includes(k) && f.flags[k] === true);
+                return (
+                  <li key={f.id} className="adm-row">
+                    <div className="adm-row-main">
+                      <strong>{f.email}</strong>
+                      <span className="muted small">
+                        {why.map((w) => (w === 'shared_device' ? 'Shares a device with another account' : 'Identity already verified elsewhere')).join('; ') || 'Manual flag'}
+                        {blocked ? '. On hold.' : ''}
+                      </span>
+                    </div>
+                    <div className="adm-row-actions">
+                      <button type="button" className={blocked ? 'ghost-sm' : 'pill-btn sm'} disabled={busy} onClick={() => act({ action: 'setBlocked', userId: f.id, blocked: !blocked }, blocked ? 'Hold removed' : 'Account on hold')}>
+                        {blocked ? 'Remove hold' : 'Put on hold'}
+                      </button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      </div>
+
+      <section className="adm-card">
+        <header className="adm-card-head wrap">
+          <h2>Eligible states</h2>
+          <div className="adm-filters">
+            <span className="muted small">{enabled.length ? `${enabled.length} enabled: ${enabled.map((j) => j.state).join(', ')}` : 'None enabled. Nobody can play yet.'}</span>
+            <select value={filter} onChange={(e) => setFilter(e.target.value as 'enabled' | 'all')} aria-label="Show states">
+              <option value="all">All states</option>
+              <option value="enabled">Enabled only</option>
+            </select>
+          </div>
+        </header>
+        <p className="muted small">Switch a state on only where you hold a licence. Players located elsewhere can’t place entries, and the minimum age applied is the stricter of where they live and where they are.</p>
+        <ul className="jur-grid">
+          {states.map((j) => (
+            <li key={j.state} className={j.enabled ? 'on' : ''}>
+              <label className="switch">
+                <input type="checkbox" checked={j.enabled} disabled={busy} onChange={(e) => act({ action: 'setJurisdiction', state: j.state, enabled: e.target.checked, minAge: j.min_age }, `${j.name} ${e.target.checked ? 'enabled' : 'disabled'}`)} />
+                <span className="switch-ui" aria-hidden />
+                <span>
+                  <strong>{j.name}</strong>
+                </span>
+              </label>
+              <select value={j.min_age} disabled={busy} aria-label={`${j.name} minimum age`} onChange={(e) => act({ action: 'setJurisdiction', state: j.state, enabled: j.enabled, minAge: Number(e.target.value) }, `${j.name} minimum age ${e.target.value}`)}>
+                {[18, 19, 21].map((a) => (
+                  <option key={a} value={a}>
+                    {a}+
+                  </option>
+                ))}
+              </select>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="adm-card">
+        <header className="adm-card-head">
+          <h2>Recent location blocks</h2>
+          <button type="button" className="text-btn" onClick={load}>
+            Refresh
+          </button>
+        </header>
+        {c.geoDenials.length === 0 ? (
+          <p className="adm-empty">No blocked attempts yet.</p>
+        ) : (
+          <table className="sport-table geo-table">
+            <thead>
+              <tr>
+                <th scope="col">Player</th>
+                <th scope="col">Action</th>
+                <th scope="col">Where</th>
+                <th scope="col">Why</th>
+                <th scope="col" className="hide-sm">When</th>
+              </tr>
+            </thead>
+            <tbody>
+              {c.geoDenials.map((g) => (
+                <tr key={g.id}>
+                  <td>{g.email}</td>
+                  <td>{g.action}</td>
+                  <td>{[g.region, g.country].filter(Boolean).join(', ') || 'Unknown'}</td>
+                  <td>{DENY_LABEL[g.reason ?? ''] ?? g.reason}</td>
+                  <td className="hide-sm">{new Date(g.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+    </div>
+  );
 }
 
 function CreditFunds({ run }: { run: (body: Record<string, unknown>) => Promise<boolean> }) {
@@ -57,7 +249,7 @@ function CreditFunds({ run }: { run: (body: Record<string, unknown>) => Promise<
 import { gameTime } from '../lib/format';
 import { Icon } from '../components/Icon';
 
-type Tab = 'overview' | 'games' | 'picks';
+type Tab = 'overview' | 'games' | 'picks' | 'compliance';
 type Phase = 'live' | 'upcoming' | 'final' | 'cancelled';
 
 const phaseOf = (g: AdminGame, now: number): Phase =>
@@ -773,7 +965,7 @@ export function Admin() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const tab = (['overview', 'games', 'picks'].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as Tab;
+  const tab = ([...['overview', 'games', 'picks'], ...(REAL_MONEY ? ['compliance'] : [])].includes(params.get('tab') ?? '') ? params.get('tab') : 'overview') as Tab;
   const gameFilter = params.get('game');
 
   const go = useCallback(
@@ -940,9 +1132,9 @@ export function Admin() {
       )}
 
       <div className="seg seg-tabs adm-tabs" role="tablist">
-        {(['overview', 'games', 'picks'] as Tab[]).map((t) => (
+        {(['overview', 'games', 'picks', ...(REAL_MONEY ? ['compliance'] : [])] as Tab[]).map((t) => (
           <button key={t} type="button" role="tab" aria-selected={tab === t} className={tab === t ? 'on' : ''} onClick={() => go(t)}>
-            {t === 'overview' ? 'Overview' : t === 'games' ? 'Games' : 'Picks'}
+            {t === 'overview' ? 'Overview' : t === 'games' ? 'Games' : t === 'picks' ? 'Picks' : 'Compliance'}
             <span className="cnt">{t === 'games' ? data.games.length : t === 'picks' ? data.picks.length : ''}</span>
           </button>
         ))}
@@ -966,6 +1158,7 @@ export function Admin() {
           <CreditFunds run={(body) => run(body as unknown as AdminAction)} />
         </div>
       )}
+      {tab === 'compliance' && REAL_MONEY && <ComplianceTab notify={notify} />}
       {tab === 'games' && <GamesTab data={data} now={now} run={run} busy={busy} go={go} />}
       {tab === 'picks' && (
         <PicksTab

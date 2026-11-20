@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store';
-import { saveProfile, supabase } from '../lib/supabase';
+import { eligibleStates, saveProfile, supabase } from '../lib/supabase';
 import { Icon } from '../components/Icon';
 
 const STATES: [string, string][] = [
@@ -62,6 +62,10 @@ export function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  const [eligible, setEligible] = useState<{ state: string; name: string; min_age: number }[] | null>(null);
+  useEffect(() => {
+    eligibleStates().then(setEligible).catch(() => setEligible([]));
+  }, []);
 
   // Prefill setup from what the player entered at sign-up (kept in their auth metadata).
   useEffect(() => {
@@ -238,7 +242,13 @@ export function Login() {
             Back to sign in
           </button>
         )}
-        {mode === 'signup' && <p className="fine left">You must be of legal age and located in an eligible state to play for real money.</p>}
+        {mode === 'signup' && (
+          <p className="fine left">
+            {eligible && eligible.length
+              ? `Real-money play is open in ${eligible.map((e) => `${e.name} (${e.min_age}+)`).join(', ')}. You can create an account anywhere, but you can only play while you’re in one of these states.`
+              : 'Real-money play isn’t open in any state yet. You can create an account now and play once your state opens.'}
+          </p>
+        )}
       </form>
     </div>
   );

@@ -37,3 +37,8 @@ src/
 
 Payout tables live in `src/lib/payouts.ts`; adding a sport or stat is a matter of editing `src/data/sports.ts`.
 To go live you would replace `generateBoard`/`settleEntry` with calls to a real backend and stats feed.
+
+## Documentation
+
+- [`docs/BUILD_PLAYBOOK.md`](docs/BUILD_PLAYBOOK.md) — how this was built, step by step, and how to reuse it.
+- [`supabase/README.md`](supabase/README.md) — the money core and compliance gates.

@@ -30,13 +30,32 @@ async function token(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
+/** Stable random id for this browser, used server-side (hashed) to spot accounts sharing a device. */
+export function deviceId(): string {
+  try {
+    let id = localStorage.getItem('picksarena:device');
+    if (!id) {
+      id = crypto.randomUUID();
+      localStorage.setItem('picksarena:device', id);
+    }
+    return id;
+  } catch {
+    return crypto.randomUUID();
+  }
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const t = await token();
   let res: Response;
   try {
     res = await fetch(path, {
       ...init,
-      headers: { 'content-type': 'application/json', ...(t ? { authorization: `Bearer ${t}` } : {}), ...(init?.headers ?? {}) },
+      headers: {
+        'content-type': 'application/json',
+        'x-device-id': deviceId(),
+        ...(t ? { authorization: `Bearer ${t}` } : {}),
+        ...(init?.headers ?? {}),
+      },
     });
   } catch {
     throw new ApiError('Can’t reach the server. Check your connection.', 0);
@@ -54,7 +73,18 @@ export interface Profile {
   self_exclusion_until: string | null;
 }
 
-export const getProfile = () => call<{ profile: Profile | null; minimumAge: number }>('/api/rm/profile');
+export const getProfile = () => call<{ profile: Profile | null }>('/api/rm/profile');
+
+export type KycStatus = 'none' | 'pending' | 'review' | 'approved' | 'rejected';
+export const getKyc = () => call<{ available: boolean; status: KycStatus; reason: string | null }>('/api/rm/kyc');
+export const startKyc = () => call<{ status: KycStatus; url?: string | null }>('/api/rm/kyc', { method: 'POST', body: '{}' });
+
+/** States where real-money play is currently switched on (public, read via RLS). */
+export async function eligibleStates(): Promise<{ state: string; name: string; min_age: number }[]> {
+  if (!supabase) return [];
+  const { data } = await supabase.from('jurisdictions').select('state, name, min_age').eq('enabled', true).order('name');
+  return data ?? [];
+}
 export const saveProfile = (dob: string, state: string) =>
   call<{ profile: Profile }>('/api/rm/profile', { method: 'POST', body: JSON.stringify({ dob, state }) });
 

@@ -25,7 +25,7 @@ const one = async <T = Record<string, unknown>>(sql: string, params: unknown[] =
 
 async function user() {
   const { id } = (await one<{ id: string }>(`insert into auth.users (email) values ($1) returning id`, [`${randomUUID()}@test.local`]))!;
-  await q(`insert into public.profiles (id) values ($1)`, [id]);
+  await q(`insert into public.profiles (id, dob, state) values ($1, '1990-01-01', 'NJ')`, [id]);
   return id;
 }
 async function game(minutesFromNow = 60, home = randomUUID().slice(0, 3), away = randomUUID().slice(0, 3)) {
@@ -43,10 +43,18 @@ async function line(gameId: string, team: string, line: number, player = randomU
 }
 const deposit = (u: string, cents: number, key = `dep:${randomUUID()}`) =>
   q(`select public.credit_deposit($1, $2, 'test-payment', $3)`, [u, cents, key]);
-const place = (u: string, picks: { id: string; d: 'more' | 'less' }[], stake: number, key = `ent:${randomUUID()}`) =>
+/** Logs a location check, as the server does before every entry. */
+async function geo(u: string, decision: 'allow' | 'deny' = 'allow', region = 'NJ', ageMinutes = 0) {
+  return (await one<{ id: string }>(
+    `insert into public.geo_checks (user_id, action, region, country, provider, decision, created_at)
+     values ($1, 'entry', $2, 'US', 'test', $3, now() - make_interval(mins => $4)) returning id`,
+    [u, region, decision, ageMinutes],
+  ))!.id;
+}
+const place = async (u: string, picks: { id: string; d: 'more' | 'less' }[], stake: number, key = `ent:${randomUUID()}`, geoId?: string) =>
   one<{ id: string; status: string; multiplier: string; potential_payout_cents: string }>(
-    `select * from public.place_entry($1, $2::jsonb, $3, $4)`,
-    [u, JSON.stringify(picks.map((p) => ({ projection_id: p.id, direction: p.d }))), stake, key],
+    `select * from public.place_entry($1, $2::jsonb, $3, $4, $5)`,
+    [u, JSON.stringify(picks.map((p) => ({ projection_id: p.id, direction: p.d }))), stake, key, geoId ?? (await geo(u))],
   );
 const grade = (proj: string, v: number) => q(`select public.grade_projection($1, $2)`, [proj, v]);
 const wallet = async (u: string) => {
@@ -84,7 +92,9 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
     await admin.end();
     db = new pg.Pool({ host: HOST, port: PORT, user: USER, database: DB, max: 6 });
     await db.query(read('tests/supabase_shim.sql'));
-    await db.query(read('migrations/20261119000001_ledger_and_entries.sql'));
+    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates'])
+      await db.query(read(`migrations/${m}.sql`));
+    await db.query(`update public.jurisdictions set enabled = true where state in ('NJ', 'PA')`);
   });
   afterAll(async () => {
     await db?.end();
@@ -387,10 +397,97 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
         /permission denied/,
       );
       await expect(
-        asPlayer(a, (c) => c.query(`select public.place_entry($1, '[]'::jsonb, 100, 'ent:direct-call')`, [a])),
+        asPlayer(a, (c) => c.query(`select public.place_entry($1, '[]'::jsonb, 100, 'ent:direct-call', 1)`, [a])),
       ).rejects.toThrow(/permission denied/);
       await expect(asPlayer(a, (c) => c.query(`insert into public.entries (user_id, idempotency_key, stake_cents, pick_count, multiplier, potential_payout_cents) values ($1, 'x', 1, 2, 3, 3)`, [a]))).rejects.toThrow(/permission denied/);
       await expect(asPlayer(a, (c) => c.query(`update public.projections set line = 0.5 where id = $1`, [s.a]))).rejects.toThrow(/permission denied/);
+    });
+  });
+
+  describe('phase 3: location, age and identity gates', () => {
+    const picks = (s: Awaited<ReturnType<typeof slate>>) => [{ id: s.a, d: 'more' as const }, { id: s.b, d: 'less' as const }];
+
+    it('refuses entries without a fresh allowed location check for that player', async () => {
+      const s = await slate();
+      const u = await user();
+      const other = await user();
+      await deposit(u, 10_000);
+      await expect(place(u, picks(s), 1_000, undefined, '999999999')).rejects.toThrow(/location_check_required/);
+      await expect(place(u, picks(s), 1_000, undefined, await geo(u, 'deny'))).rejects.toThrow(/location_check_required/);
+      await expect(place(u, picks(s), 1_000, undefined, await geo(u, 'allow', 'NJ', 3))).rejects.toThrow(/location_check_required/);
+      await expect(place(u, picks(s), 1_000, undefined, await geo(other))).rejects.toThrow(/location_check_required/);
+      await expect(place(u, picks(s), 1_000, undefined, await geo(u, 'allow', 'CA'))).rejects.toThrow(/location_not_eligible/);
+      expect((await wallet(u)).available).toBe(10_000);
+      expect((await place(u, picks(s), 1_000))!.status).toBe('open');
+    });
+
+    it('applies the stricter minimum age of home state and current location', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      const twenty = new Date(Date.now() - 20.5 * 365.25 * 864e5).toISOString().slice(0, 10);
+      await q(`update public.profiles set dob = $2, state = 'PA' where id = $1`, [u, twenty]);
+      await q(`update public.jurisdictions set min_age = 18 where state = 'PA'`);
+      await q(`update public.jurisdictions set min_age = 21 where state = 'NJ'`);
+      await expect(place(u, picks(s), 1_000)).rejects.toThrow(/under_age/); // located in NJ (21+)
+      expect((await place(u, picks(s), 1_000, undefined, await geo(u, 'allow', 'PA')))!.status).toBe('open');
+      await q(`update public.jurisdictions set min_age = 21 where state = 'PA'`);
+    });
+
+    it('blocks flagged accounts and players without a completed profile', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      await q(`update public.profiles set flags = flags || '{"blocked": true}' where id = $1`, [u]);
+      await expect(place(u, picks(s), 1_000)).rejects.toThrow(/account_blocked/);
+      const v = await user();
+      await q(`update public.profiles set dob = null where id = $1`, [v]);
+      await expect(place(v, picks(s), 1_000)).rejects.toThrow(/profile_required/);
+    });
+
+    it('server code cannot bypass the geofence through the internal function', async () => {
+      const c = await db.connect();
+      try {
+        await c.query('begin');
+        await c.query('set local role service_role');
+        await expect(c.query(`select public.place_entry_unchecked(gen_random_uuid(), '[]'::jsonb, 100, 'ent:bypass-attempt')`)).rejects.toThrow(
+          /permission denied/,
+        );
+      } finally {
+        await c.query('rollback');
+        c.release();
+      }
+    });
+
+    it('logs location checks permanently', async () => {
+      const u = await user();
+      await geo(u);
+      await expect(q(`delete from public.geo_checks where user_id = $1`, [u])).rejects.toThrow(/append-only/);
+      await expect(q(`update public.geo_checks set decision = 'allow' where user_id = $1`, [u])).rejects.toThrow(/append-only/);
+    });
+
+    it('approves one verified identity on one account only', async () => {
+      const a = await user();
+      const b = await user();
+      const rec = async (u: string) =>
+        (await one<{ id: string }>(`insert into public.kyc_records (user_id, provider, provider_ref, status) values ($1, 'test', $2, 'pending') returning id`, [u, randomUUID()]))!.id;
+      const ra = await rec(a);
+      const rb = await rec(b);
+      expect((await one<{ s: string }>(`select public.set_kyc_decision($1, 'approved', null, 'same-person-hash', 'test') as s`, [ra]))!.s).toBe('approved');
+      expect((await one<{ s: string }>(`select public.set_kyc_decision($1, 'approved', null, 'same-person-hash', 'test') as s`, [rb]))!.s).toBe('rejected');
+      expect(await one(`select kyc_status, flags->>'duplicate_identity' as dup from public.profiles where id = $1`, [b])).toEqual({ kyc_status: 'rejected', dup: 'true' });
+      expect(await one(`select kyc_status from public.profiles where id = $1`, [a])).toEqual({ kyc_status: 'approved' });
+      await expect(q(`select public.set_kyc_decision($1, 'rejected', 'x', null, 'test')`, [ra])).rejects.toThrow(/kyc_already_decided/);
+    });
+
+    it('flags every account that shares a device', async () => {
+      const a = await user();
+      const b = await user();
+      const hash = `dev-${randomUUID()}`;
+      expect((await one<{ s: boolean }>(`select public.record_device($1, $2) as s`, [a, hash]))!.s).toBe(false);
+      expect((await one<{ s: boolean }>(`select public.record_device($1, $2) as s`, [b, hash]))!.s).toBe(true);
+      const flags = await q<{ f: string }>(`select flags->>'shared_device' as f from public.profiles where id = any($1)`, [[a, b]]);
+      expect(flags.map((r) => r.f)).toEqual(['true', 'true']);
     });
   });
 

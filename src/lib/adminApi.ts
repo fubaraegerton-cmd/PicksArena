@@ -30,9 +30,13 @@ export function rememberPassword(p: string | null) {
 }
 
 async function call<T>(password: string, init?: RequestInit): Promise<T> {
+  return callAt<T>('/api/admin', password, init);
+}
+
+async function callAt<T>(url: string, password: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
-    res = await fetch('/api/admin', {
+    res = await fetch(url, {
       ...init,
       headers: { authorization: `Bearer ${password}`, 'content-type': 'application/json', ...(init?.headers ?? {}) },
       cache: 'no-store',
@@ -51,4 +55,19 @@ export function adminLogin(password: string) {
 
 export function adminDo(password: string, action: AdminAction, baseVersion: number) {
   return call<{ data: AdminData }>(password, { method: 'POST', body: JSON.stringify({ ...action, baseVersion }) });
+}
+
+export interface ComplianceData {
+  jurisdictions: { state: string; name: string; enabled: boolean; min_age: number; updated_at: string; updated_by: string | null }[];
+  kycQueue: { id: number; user_id: string; email: string; provider: string; status: string; created_at: string }[];
+  flagged: { id: string; email: string; state: string | null; kyc_status: string; flags: Record<string, unknown> }[];
+  geoDenials: { id: number; email: string; action: string; region: string | null; country: string | null; is_vpn: boolean | null; reason: string | null; created_at: string }[];
+}
+
+export function adminCompliance(credential: string) {
+  return callAt<ComplianceData>('/api/admin?view=compliance', credential);
+}
+
+export function adminCompliancePost(credential: string, body: Record<string, unknown>) {
+  return callAt<{ ok: true; compliance: ComplianceData }>('/api/admin', credential, { method: 'POST', body: JSON.stringify(body) });
 }

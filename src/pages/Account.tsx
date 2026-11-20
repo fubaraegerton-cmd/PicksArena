@@ -2,6 +2,65 @@ import { useStore } from '../store';
 import { money } from '../lib/format';
 import { haptic, useInstallPrompt, useTheme, type ThemePref } from '../lib/device';
 import { Link } from 'react-router-dom';
+import { useEffect, useState } from 'react';
+import { getKyc, startKyc, type KycStatus } from '../lib/supabase';
+
+const KYC_COPY: Record<KycStatus, string> = {
+  none: 'Needed before your first withdrawal. It takes about two minutes: a photo of your ID and a quick selfie.',
+  pending: 'Started. Finish the steps with our verification partner to complete it.',
+  review: 'Submitted. We’ll update this page as soon as the review is done.',
+  approved: 'Verified. You’re cleared for withdrawals.',
+  rejected: 'We couldn’t verify your identity. Contact support to sort it out.',
+};
+
+function IdentityCard() {
+  const [state, setState] = useState<{ available: boolean; status: KycStatus; reason: string | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    getKyc().then(setState).catch((e) => setErr((e as Error).message));
+  }, []);
+  if (!state) return err ? <p className="ticket-error">{err}</p> : null;
+  const canStart = state.available && (state.status === 'none' || state.status === 'pending');
+  return (
+    <div className="row-card">
+      <Icon name={state.status === 'approved' ? 'check' : 'shield'} size={18} />
+      <div>
+        <strong>Identity check{state.status === 'approved' ? ': verified' : state.status === 'review' ? ': in review' : ''}</strong>
+        <p>
+          {state.status === 'rejected' && state.reason === 'duplicate_identity'
+            ? 'This identity is already verified on another account. Each person can have one account.'
+            : !state.available && state.status === 'none'
+              ? 'Identity checks open soon. You’ll need one before your first withdrawal.'
+              : KYC_COPY[state.status]}
+        </p>
+        {err && <p className="neg">{err}</p>}
+      </div>
+      {canStart && (
+        <button
+          type="button"
+          className="pill-btn"
+          disabled={busy}
+          onClick={async () => {
+            setBusy(true);
+            setErr(null);
+            try {
+              const r = await startKyc();
+              if (r.url) window.location.href = r.url;
+              else setState((s) => s && { ...s, status: r.status });
+            } catch (e) {
+              setErr((e as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          {state.status === 'pending' ? 'Continue' : 'Verify'}
+        </button>
+      )}
+    </div>
+  );
+}
 import { Icon } from '../components/Icon';
 
 export function Account() {
@@ -69,13 +128,15 @@ export function Account() {
             <div>
               <strong>{session.email}</strong>
               <p>
-                {profile?.state ? `Playing from ${profile.state}. ` : ''}
-                Identity check: {profile?.kyc_status === 'approved' ? 'verified' : 'needed before your first withdrawal'}.
+                {profile?.state ? `Home state: ${profile.state}.` : ''}
               </p>
             </div>
             <button type="button" className="pill-btn" onClick={signOut}>
               Sign out
             </button>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <IdentityCard />
           </div>
         </section>
       )}

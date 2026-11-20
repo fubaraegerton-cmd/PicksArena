@@ -3,6 +3,7 @@ import { applyAction, validateAction, type AdminAction } from '../src/shared/adm
 import { loadData, saveData, storageMode } from './storage.js';
 import { db, supabaseConfigured } from './supabase.js';
 import { OperatorError, applySlateAction, loadSlate } from './slate.js';
+import { applyDecision } from './kyc.js';
 
 const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -25,16 +26,17 @@ function bearer(req: Request): string | null {
 }
 
 /** Operator = a signed-in Supabase account whose app_metadata.role is 'operator' (only the server can set it). */
-async function isOperator(req: Request): Promise<boolean> {
-  if (!supabaseConfigured()) return false;
+async function operatorEmail(req: Request): Promise<string | null> {
+  if (!supabaseConfigured()) return null;
   const token = bearer(req);
-  if (!token || token.split('.').length !== 3) return false;
+  if (!token || token.split('.').length !== 3) return null;
   const { data, error } = await db().auth.getUser(token);
-  return !error && data.user?.app_metadata?.role === 'operator';
+  if (error || data.user?.app_metadata?.role !== 'operator') return null;
+  return data.user.email ?? data.user.id;
 }
 
 async function authError(req: Request): Promise<Response | null> {
-  if (await isOperator(req)) return null;
+  if (await operatorEmail(req)) return null;
   if (supabaseConfigured() && !process.env.ADMIN_PASSWORD)
     return json({ error: 'Sign in with an operator account to use the dashboard.' }, 401);
   if (!process.env.ADMIN_PASSWORD)
@@ -58,6 +60,7 @@ export async function adminGET(req: Request): Promise<Response> {
   const err = await authError(req);
   if (err) return err;
   try {
+    if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'compliance') return json(await complianceView());
     if (supabaseConfigured()) return json({ data: await loadSlate('operator'), storage: 'supabase' });
     return json({ data: await loadData(), storage: storageMode() });
   } catch (e) {
@@ -77,7 +80,11 @@ export async function adminPOST(req: Request): Promise<Response> {
   }
   if (supabaseConfigured()) {
     try {
-      if ((body as unknown as { action: string }).action === 'creditFunds') return await creditFunds(body as unknown as CreditFunds);
+      const act = (body as unknown as { action: string }).action;
+      const by = (await operatorEmail(req)) ?? 'admin-password';
+      if (act === 'creditFunds') return await creditFunds(body as unknown as CreditFunds);
+      if (act === 'setJurisdiction' || act === 'kycDecision' || act === 'setBlocked')
+        return await complianceAction(body as unknown as ComplianceAction, by);
       await applySlateAction(body);
       return json({ data: await loadSlate('operator') });
     } catch (e) {
@@ -136,4 +143,69 @@ async function creditFunds(b: CreditFunds): Promise<Response> {
   });
   if (error) return json({ error: /insufficient_funds/.test(error.message) ? 'That would take the player’s balance below zero.' : error.message }, 422);
   return json({ ok: true, data: await loadSlate('operator') });
+}
+
+type ComplianceAction =
+  | { action: 'setJurisdiction'; state: string; enabled: boolean; minAge: number }
+  | { action: 'kycDecision'; recordId: number; status: 'approved' | 'rejected'; reason?: string }
+  | { action: 'setBlocked'; userId: string; blocked: boolean };
+
+async function emailsById(): Promise<Map<string, string>> {
+  const m = new Map<string, string>();
+  for (let page = 1; page <= 20; page++) {
+    const { data, error } = await db().auth.admin.listUsers({ page, perPage: 1000 });
+    if (error) throw new Error(error.message);
+    data.users.forEach((u) => m.set(u.id, u.email ?? u.id));
+    if (data.users.length < 1000) break;
+  }
+  return m;
+}
+
+/** Operator compliance view: eligible states, ID review queue, flagged accounts, recent location denials. */
+async function complianceView() {
+  const [j, k, f, g, emails] = await Promise.all([
+    db().from('jurisdictions').select('state, name, enabled, min_age, updated_at, updated_by').order('name'),
+    db().from('kyc_records').select('id, user_id, provider, status, reason, created_at').in('status', ['pending', 'review']).order('created_at').limit(200),
+    db().from('profiles').select('id, state, kyc_status, flags, dob').neq('flags', '{}').limit(200),
+    db().from('geo_checks').select('id, user_id, action, region, country, is_vpn, reason, created_at').eq('decision', 'deny').order('created_at', { ascending: false }).limit(50),
+    emailsById(),
+  ]);
+  for (const r of [j, k, f, g]) if (r.error) throw new Error(r.error.message);
+  const email = (id: string) => emails.get(id) ?? id;
+  return {
+    jurisdictions: j.data,
+    kycQueue: (k.data ?? []).map((r) => ({ ...r, email: email(r.user_id as string) })),
+    flagged: (f.data ?? []).map((r) => ({ ...r, email: email(r.id as string) })),
+    geoDenials: (g.data ?? []).map((r) => ({ ...r, email: email(r.user_id as string) })),
+  };
+}
+
+async function complianceAction(a: ComplianceAction, by: string): Promise<Response> {
+  if (a.action === 'setJurisdiction') {
+    const state = String(a.state ?? '').toUpperCase();
+    const minAge = Number(a.minAge);
+    if (!/^[A-Z]{2}$/.test(state)) return json({ error: 'Unknown state.' }, 422);
+    if (!Number.isInteger(minAge) || minAge < 18 || minAge > 25) return json({ error: 'Minimum age must be 18 to 25.' }, 422);
+    const { error, count } = await db()
+      .from('jurisdictions')
+      .update({ enabled: !!a.enabled, min_age: minAge, updated_at: new Date().toISOString(), updated_by: by }, { count: 'exact' })
+      .eq('state', state);
+    if (error) return json({ error: error.message }, 500);
+    if (!count) return json({ error: 'Unknown state.' }, 404);
+  } else if (a.action === 'kycDecision') {
+    if (!['approved', 'rejected'].includes(a.status)) return json({ error: 'Choose approve or reject.' }, 422);
+    if (a.status === 'rejected' && !(a.reason ?? '').trim()) return json({ error: 'Give a reason for rejecting.' }, 422);
+    try {
+      await applyDecision(Number(a.recordId), a.status, a.reason?.trim() || null, null, `operator:${by}`);
+    } catch (e) {
+      return json({ error: /already_decided/.test((e as Error).message) ? 'That check was already decided.' : (e as Error).message }, 422);
+    }
+  } else if (a.action === 'setBlocked') {
+    const { data: p, error: pe } = await db().from('profiles').select('flags').eq('id', a.userId).maybeSingle();
+    if (pe || !p) return json({ error: pe?.message ?? 'Player not found.' }, 404);
+    const flags = { ...(p.flags as Record<string, unknown>), blocked: !!a.blocked, blocked_by: by, blocked_at: new Date().toISOString() };
+    const { error } = await db().from('profiles').update({ flags }).eq('id', a.userId);
+    if (error) return json({ error: error.message }, 500);
+  }
+  return json({ ok: true, compliance: await complianceView() });
 }

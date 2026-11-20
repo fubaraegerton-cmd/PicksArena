@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import { ageOn, db, minimumAge, playerFrom, supabaseConfigured } from './supabase.js';
+import { ageOn, db, playerFrom, supabaseConfigured } from './supabase.js';
+import { GEO_MESSAGES, checkLocation, deviceHash } from './geo.js';
+import { applyDecision, kycProvider, latestKyc } from './kyc.js';
 
 const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), {
@@ -24,19 +26,36 @@ interface ProfileRow {
   state: string | null;
   kyc_status: string;
   self_exclusion_until: string | null;
+  flags: Record<string, unknown>;
 }
 
 async function loadProfile(id: string): Promise<ProfileRow | null> {
-  const { data, error } = await db().from('profiles').select('id, dob, state, kyc_status, self_exclusion_until').eq('id', id).maybeSingle();
+  const { data, error } = await db()
+    .from('profiles')
+    .select('id, dob, state, kyc_status, self_exclusion_until, flags')
+    .eq('id', id)
+    .maybeSingle();
   if (error) throw new Error(error.message);
   return data as ProfileRow | null;
+}
+
+async function minAge(home: string | null, located: string | null): Promise<number> {
+  const { data, error } = await db().rpc('min_age_for', { p_home: home, p_located: located });
+  if (error) throw new Error(error.message);
+  return Number(data);
+}
+
+async function recordDevice(req: Request, userId: string) {
+  const hash = deviceHash(req);
+  if (hash) await db().rpc('record_device', { p_user: userId, p_device_hash: hash });
 }
 
 /** GET /api/rm/profile — the signed-in player's profile (null until they finish sign-up). */
 export async function profileGET(req: Request) {
   const r = await requirePlayer(req);
   if (r.error) return r.error;
-  return json({ profile: await loadProfile(r.user.id), minimumAge: minimumAge(null) });
+  const profile = await loadProfile(r.user.id);
+  return json({ profile: profile && { ...profile, flags: undefined } });
 }
 
 /** POST /api/rm/profile {dob: 'YYYY-MM-DD', state: 'NJ'} — completes sign-up. Age is checked here, not in the browser. */
@@ -55,7 +74,11 @@ export async function profilePOST(req: Request) {
   if (!US_STATES.has(state)) return json({ error: 'Choose the state you live in.' }, 422);
   const age = ageOn(dob);
   if (age > 120) return json({ error: 'Check your date of birth.' }, 422);
-  const min = minimumAge(state);
+
+  // Log where sign-up happened (doesn't block sign-up; playing is geofenced separately).
+  const geo = await checkLocation(req, r.user.id, 'signup');
+  const located = geo.country === 'US' ? geo.region : null;
+  const min = await minAge(state, located);
   if (age < min) return json({ error: `You must be ${min} or older to play.` }, 403);
 
   const existing = await loadProfile(r.user.id);
@@ -63,6 +86,7 @@ export async function profilePOST(req: Request) {
     return json({ error: 'Your date of birth is already on file. Contact support to correct it.' }, 409);
   const { error } = await db().from('profiles').upsert({ id: r.user.id, dob, state });
   if (error) return json({ error: error.message }, 500);
+  await recordDevice(req, r.user.id);
   return json({ profile: await loadProfile(r.user.id) });
 }
 
@@ -77,6 +101,10 @@ const ENTRY_ERRORS: [RegExp, number, string][] = [
   [/stake_below_minimum/, 422, 'The minimum entry is $1.'],
   [/stake_above_maximum/, 422, 'The maximum entry is $1,000.'],
   [/self_excluded/, 403, 'Your account is self-excluded, so new entries are blocked.'],
+  [/under_age/, 403, 'You’re under the minimum age where you are right now.'],
+  [/account_blocked/, 403, 'Your account is on hold. Contact support.'],
+  [/location_not_eligible|location_check_required/, 403, GEO_MESSAGES.state_not_eligible],
+  [/profile_required/, 403, 'Finish setting up your account first.'],
 ];
 
 /** POST /api/rm/entries {picks: [{projection_id, direction}], stake_cents, idempotency_key} */
@@ -96,11 +124,13 @@ export async function entriesPOST(req: Request) {
   const stake = Number(body.stake_cents);
   if (!Number.isInteger(stake)) return json({ error: 'Enter a whole number of cents.' }, 422);
 
-  // Age gate is re-checked on every entry, not only at sign-up.
   const profile = await loadProfile(r.user.id);
   if (!profile?.dob || !profile.state) return json({ error: 'Finish setting up your account first.', code: 'profile_required' }, 403);
-  const min = minimumAge(profile.state);
-  if (ageOn(profile.dob) < min) return json({ error: `You must be ${min} or older to play.` }, 403);
+
+  await recordDevice(req, r.user.id);
+  const geo = await checkLocation(req, r.user.id, 'entry');
+  if (geo.decision === 'deny')
+    return json({ error: GEO_MESSAGES[geo.reason ?? 'location_unknown'] ?? GEO_MESSAGES.location_unknown, code: 'location_denied' }, 403);
 
   const key = typeof body.idempotency_key === 'string' && body.idempotency_key.length >= 8 ? body.idempotency_key : `ent:${randomUUID()}`;
   const { data, error } = await db().rpc('place_entry', {
@@ -108,6 +138,7 @@ export async function entriesPOST(req: Request) {
     p_picks: picks.map((p) => ({ projection_id: p.projection_id, direction: p.direction })),
     p_stake_cents: stake,
     p_key: `${r.user.id}:${key}`,
+    p_geo_check: geo.id,
   });
   if (error) {
     const hit = ENTRY_ERRORS.find(([re]) => re.test(error.message));
@@ -115,4 +146,42 @@ export async function entriesPOST(req: Request) {
     return json({ error: 'The entry couldn’t be placed. Try again.' }, 500);
   }
   return json({ entry: data });
+}
+
+/** GET /api/rm/kyc — identity check status for the signed-in player. */
+export async function kycGET(req: Request) {
+  const r = await requirePlayer(req);
+  if (r.error) return r.error;
+  const rec = await latestKyc(r.user.id);
+  return json({
+    available: !!kycProvider(),
+    status: rec?.status ?? 'none',
+    reason: rec?.status === 'rejected' ? rec.reason : null,
+  });
+}
+
+/** POST /api/rm/kyc — starts (or resumes) identity verification. Returns a hosted URL when the provider has one. */
+export async function kycPOST(req: Request) {
+  const r = await requirePlayer(req);
+  if (r.error) return r.error;
+  const provider = kycProvider();
+  if (!provider) return json({ error: 'Identity checks aren’t connected yet. Try again later.' }, 503);
+  const profile = await loadProfile(r.user.id);
+  if (!profile?.dob) return json({ error: 'Finish setting up your account first.', code: 'profile_required' }, 403);
+
+  const rec = await latestKyc(r.user.id);
+  if (rec?.status === 'approved') return json({ status: 'approved' });
+  if (rec?.status === 'review') return json({ status: 'review' });
+  if (rec?.status === 'rejected' && rec.reason === 'duplicate_identity')
+    return json({ error: 'This identity is already verified on another account. Contact support.' }, 409);
+
+  const started = await provider.start(r.user);
+  const { data, error } = await db()
+    .from('kyc_records')
+    .insert({ user_id: r.user.id, provider: provider.name, provider_ref: started.ref, status: 'pending' })
+    .select('id')
+    .single();
+  if (error) return json({ error: error.message }, 500);
+  if (started.status === 'review') await applyDecision(data.id as number, 'review', null, null, provider.name);
+  return json({ status: started.status, url: started.url });
 }

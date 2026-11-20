@@ -27,15 +27,6 @@ export async function playerFrom(req: Request): Promise<User | null> {
   return data.user;
 }
 
-/**
- * Minimum age to play. Most licensed US pick'em states are 18+, some 19+ or 21+.
- * Until the per-state table is configured, default to the strictest (21).
- */
-export function minimumAge(_state: string | null | undefined): number {
-  const n = Number(process.env.MIN_PLAYER_AGE ?? 21);
-  return Number.isFinite(n) && n >= 18 ? n : 21;
-}
-
 export function ageOn(dob: string, now = new Date()): number {
   const [y, m, d] = dob.split('-').map(Number);
   let age = now.getUTCFullYear() - y;
