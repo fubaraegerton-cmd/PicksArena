@@ -1,5 +1,5 @@
 import type { AdminAction, AdminData, AdminGame, AdminPick } from '../src/shared/admin.js';
-import { validateAction } from '../src/shared/admin.js';
+import { autoVenom, validateAction } from '../src/shared/admin.js';
 import { db } from './supabase.js';
 
 /**
@@ -32,6 +32,8 @@ interface ProjectionRow {
   line: number;
   special: boolean;
   note: string | null;
+  tier: 'standard' | 'venom' | 'shield';
+  payout_factor: number;
   status: 'open' | 'pulled' | 'final' | 'void';
   result: number | null;
   created_at: string;
@@ -67,6 +69,8 @@ function toPick(p: ProjectionRow, g: GameRow | undefined): AdminPick {
     active: p.status !== 'pulled',
     actual: p.result === null ? undefined : Number(p.result),
     createdAt: Date.parse(p.created_at),
+    tier: p.tier ?? 'standard',
+    payoutFactor: Number(p.payout_factor ?? 1),
   };
 }
 
@@ -183,7 +187,7 @@ export async function applySlateAction(a: AdminAction): Promise<void> {
       const game = current.games.find((g) => g.id === p.gameId)!;
       if (game.startsAt <= Date.now()) throw new OperatorError('That game has already started, so no new lines can be added.');
       const team = p.side === 'home' ? game.home.abbr : game.away.abbr;
-      const { error } = await db().from('projections').insert({
+      const row = {
         game_id: game.id,
         slate_date: new Date(game.startsAt).toISOString().slice(0, 10),
         player_id: `${team.toLowerCase()}-${slug(p.playerName)}`,
@@ -195,7 +199,18 @@ export async function applySlateAction(a: AdminAction): Promise<void> {
         line: p.line,
         special: !!p.special,
         note: p.note?.trim() || null,
-      });
+        tier: p.tier ?? 'standard',
+        payout_factor: p.tier && p.tier !== 'standard' ? p.payoutFactor : 1,
+      };
+      const rows = [row];
+      if (a.autoVenom && row.tier === 'standard') {
+        const hasVenom = current.picks.some(
+          (x) => x.gameId === game.id && x.playerName.toLowerCase() === row.player_name.toLowerCase() && x.statType.toLowerCase() === row.stat_type.toLowerCase() && x.tier === 'venom',
+        );
+        const v = autoVenom(p.line);
+        if (!hasVenom) rows.push({ ...row, line: v.line, tier: 'venom', payout_factor: v.payoutFactor, special: false });
+      }
+      const { error } = await db().from('projections').insert(rows);
       if (error) throw new OperatorError(friendly(error.message));
       return;
     }

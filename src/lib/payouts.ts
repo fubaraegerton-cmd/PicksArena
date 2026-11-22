@@ -22,6 +22,17 @@ export const FLEX_TABLE: Record<number, Record<number, number>> = {
   6: { 6: 25, 5: 2, 4: 0.4 },
 };
 
+/** Venom/Shield lines (tier ≠ standard) are More-only and multiply the payout. */
+export const isTiered = (p: Projection | undefined) => !!p && !!p.tier && p.tier !== 'standard';
+export const factorOf = (p: Projection | undefined) => (p && isTiered(p) ? p.payoutFactor ?? 1 : 1);
+
+/** Power multiplier for these legs: table × product of Venom/Shield factors (2 decimals, max 1000×). Same rule as the database. */
+export function entryMultiplier(projs: Projection[]): number {
+  const base = POWER_TABLE[projs.length] ?? 0;
+  const factor = projs.reduce((f, p) => f * factorOf(p), 1);
+  return Math.min(Math.round(base * factor * 100) / 100, 1000);
+}
+
 export function flexAvailable(n: number) {
   return n >= 3 && n <= MAX_PICKS;
 }
@@ -62,6 +73,9 @@ export function validateLineup(
   const projs = picks.map((p) => byId.get(p.projectionId)).filter(Boolean) as Projection[];
 
   if (projs.length < MIN_PICKS) errors.push(`Select at least ${MIN_PICKS} players.`);
+  if (picks.some((p) => p.direction === 'less' && isTiered(byId.get(p.projectionId))))
+    errors.push('Venom and Shield picks can only be More.');
+  if (playType === 'flex' && projs.some(isTiered)) errors.push('Venom and Shield picks are Power Play only.');
   if (projs.length > MAX_PICKS) errors.push(`You can select at most ${MAX_PICKS} players.`);
 
   const teams = new Set(projs.map((p) => p.player.team.abbr));

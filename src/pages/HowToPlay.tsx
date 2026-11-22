@@ -73,6 +73,25 @@ export function HowToPlay() {
         )}
       </div>
 
+      <h2 className="section-title">Venom and Shield picks</h2>
+      <div className="paygrid tiers-explain">
+        <section className="paycard tier-card venom">
+          <header>
+            <h3>Venom</h3>
+            <p>Harder line, bigger payout</p>
+          </header>
+          <p className="tier-copy">The line is set higher than the standard one. Pick More and, if it hits, your whole entry’s payout is multiplied by the Venom factor. A Venom ×1.5 turns a 3-pick’s 5× into 7.5×.</p>
+        </section>
+        <section className="paycard tier-card shield">
+          <header>
+            <h3>Shield</h3>
+            <p>Easier line, smaller payout</p>
+          </header>
+          <p className="tier-copy">The line is set lower, so it’s easier to clear. Pick More and the payout is multiplied by the Shield factor. A Shield ×0.6 turns a 3-pick’s 5× into 3×.</p>
+        </section>
+      </div>
+      <p className="muted small">Venom and Shield picks are More only, can’t be combined with the same player’s standard line, and are Power Play only. If one lands exactly on its line or the player sits out, it drops out along with its factor.</p>
+
       <p className="fine left">
         {REAL_MONEY
           ? 'Real money. You must be of legal age and located in an eligible state. Play responsibly.'

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useStore } from '../store';
-import { MAX_PICKS, MIN_ENTRY, MAX_ENTRY, flexAvailable, maxMultiplier, payoutTiers, validateLineup } from '../lib/payouts';
+import { MAX_PICKS, MIN_ENTRY, MAX_ENTRY, entryMultiplier, flexAvailable, isTiered, maxMultiplier, payoutTiers, validateLineup } from '../lib/payouts';
 import { money } from '../lib/format';
 import { haptic } from '../lib/device';
 import { Icon } from './Icon';
@@ -21,8 +21,10 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
     () => validateLineup(picks, byId, playType, amount, balance, now),
     [picks, byId, playType, amount, balance, now],
   );
-  const mult = maxMultiplier(playType, n);
-  const tiers = payoutTiers(playType, n);
+  const projs = picks.map((p) => byId.get(p.projectionId)).filter(Boolean) as NonNullable<ReturnType<typeof byId.get>>[];
+  const hasTiered = projs.some(isTiered);
+  const mult = playType === 'power' ? entryMultiplier(projs) : maxMultiplier(playType, n);
+  const tiers = playType === 'power' ? (mult ? [{ hits: n, mult }] : []) : payoutTiers(playType, n);
   const safeAmount = Number.isFinite(amount) ? amount : 0;
 
   if (n === 0) {
@@ -68,6 +70,7 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
                 <strong>{p.player.name}</strong>
                 <span>
                   <b className="tk-line">{p.line}</b> {p.statType}
+                  {isTiered(p) && <span className={`tk-tier ${p.tier}`}> {p.tier === 'venom' ? 'Venom' : 'Shield'} ×{p.payoutFactor}</span>}
                 </span>
               </div>
               <div className="seg seg-sm" role="group" aria-label={`${p.player.name} direction`}>
@@ -75,6 +78,8 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
                   type="button"
                   className={pk.direction === 'less' ? 'on less' : ''}
                   aria-pressed={pk.direction === 'less'}
+                  disabled={isTiered(p)}
+                  title={isTiered(p) ? 'Venom and Shield picks are More only' : undefined}
                   onClick={() => pk.direction !== 'less' && (haptic(8), togglePick(p.id, 'less'))}
                 >
                   <Icon name="down" size={14} strokeWidth={3} />
@@ -117,7 +122,7 @@ export function Slip({ onSubmitted }: { onSubmitted?: () => void }) {
           role="radio"
           aria-checked={playType === 'flex'}
           className={playType === 'flex' ? 'on' : ''}
-          disabled={!flexAvailable(n)}
+          disabled={!flexAvailable(n) || hasTiered}
           onClick={() => { haptic(6); setPlayType('flex'); }}
         >
           Flex

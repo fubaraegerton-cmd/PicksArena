@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { askConfirm } from '../components/NativeDialog';
 import { Link } from 'react-router-dom';
 import { useStore } from '../store';
 import { money } from '../lib/format';
@@ -123,11 +124,22 @@ export function ResponsibleGaming() {
   }, [realMoney, session, load]);
 
   const takeBreak = async (kind: 'cool_off' | 'self_exclusion', days: number | null, label: string) => {
-    const msg =
+    const ok = await askConfirm(
       kind === 'cool_off'
-        ? `Take a ${label} break? Deposits and new entries stop immediately and can’t be turned back on early. You can still withdraw.`
-        : `Self-exclude ${days === null ? 'permanently' : `for ${label}`}? Deposits and new entries stop immediately. This can’t be undone or shortened, even by support. You can still withdraw your balance.`;
-    if (!confirm(msg)) return;
+        ? {
+            title: `Take a ${label} break?`,
+            message: 'Deposits and new entries stop immediately and can’t be turned back on early. You can still withdraw.',
+            confirmLabel: 'Start break',
+            destructive: true,
+          }
+        : {
+            title: `Self-exclude ${days === null ? 'permanently' : `for ${label}`}?`,
+            message: 'Deposits and new entries stop immediately. This can’t be undone or shortened, even by support. You can still withdraw your balance.',
+            confirmLabel: 'Self-exclude',
+            destructive: true,
+          },
+    );
+    if (!ok) return;
     setBusy(true);
     try {
       await exclude(kind, days);

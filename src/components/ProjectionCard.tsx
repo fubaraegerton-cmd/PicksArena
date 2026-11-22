@@ -21,6 +21,7 @@ export function Jersey({ color, number, size = 'md' }: { color: string; number?:
 
 function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
   const started = p.game.startsAt <= now;
+  const tiered = !!p.tier && p.tier !== 'standard';
   const soon = countdown(p.game.startsAt, now);
   const isHome = p.game.home.abbr === p.player.team.abbr;
   const pick = (d: Direction) => {
@@ -30,7 +31,7 @@ function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
 
   return (
     <article
-      className={`pcard ${selected ? `is-${selected}` : ''} ${p.special ? 'is-special' : ''}`}
+      className={`pcard ${selected ? `is-${selected}` : ''} ${p.special ? 'is-special' : ''} ${tiered ? `tier-${p.tier}` : ''}`}
       style={{ '--team': p.player.team.color } as CSSProperties}
       aria-label={`${p.player.name}, ${p.line} ${p.statType}`}
     >
@@ -39,6 +40,11 @@ function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
           <div className="pcard-meta">
             <span className="team-abbr">{p.player.team.abbr}</span>
             <span>{p.player.position}</span>
+            {tiered && (
+              <span className={`flag flag-${p.tier}`} title={p.tier === 'venom' ? 'Harder line, bigger payout. More only.' : 'Easier line, smaller payout. More only.'}>
+                {p.tier === 'venom' ? 'Venom' : 'Shield'} ×{p.payoutFactor}
+              </span>
+            )}
             {p.special && (
               <span className="flag flag-special">
                 <Icon name="star" size={11} strokeWidth={2.5} />
@@ -78,7 +84,8 @@ function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
         <span>{p.moreShare}% more</span>
       </div>
 
-      <div className="pcard-actions" role="group" aria-label="Pick direction">
+      <div className={`pcard-actions ${tiered ? 'single' : ''}`} role="group" aria-label="Pick direction">
+        {!tiered && (
         <button
           type="button"
           className={`pick less ${selected === 'less' ? 'on' : ''}`}
@@ -89,6 +96,7 @@ function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
           <Icon name="down" size={16} strokeWidth={2.75} />
           Less
         </button>
+        )}
         <button
           type="button"
           className={`pick more ${selected === 'more' ? 'on' : ''}`}
@@ -96,7 +104,7 @@ function ProjectionCardBase({ projection: p, selected, now, onPick }: Props) {
           aria-pressed={selected === 'more'}
           onClick={() => pick('more')}
         >
-          More
+          {tiered ? `More only, ×${p.payoutFactor}` : 'More'}
           <Icon name="up" size={16} strokeWidth={2.75} />
         </button>
       </div>

@@ -8,7 +8,7 @@ import { ProjectionCard } from '../components/ProjectionCard';
 import { Slip } from '../components/Slip';
 import { BottomSheet } from '../components/BottomSheet';
 import { Icon } from '../components/Icon';
-import { maxMultiplier } from '../lib/payouts';
+import { entryMultiplier, maxMultiplier } from '../lib/payouts';
 import { gameTime, money } from '../lib/format';
 import { haptic } from '../lib/device';
 
@@ -48,7 +48,8 @@ export function Board() {
   const statTypes = useMemo(() => {
     const freq = new Map<string, number>();
     sportBoard.forEach((p) => freq.set(p.statType, (freq.get(p.statType) ?? 0) + 1));
-    return ['All', ...[...freq.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s)];
+    const tiered = sportBoard.some((p) => p.tier && p.tier !== 'standard');
+    return ['All', ...(tiered ? ['Venom & Shield'] : []), ...[...freq.entries()].sort((a, b) => b[1] - a[1]).map(([s]) => s)];
   }, [sportBoard]);
   const activeStat = statTypes.includes(stat) ? stat : 'All';
   const activeGame = games.some((g) => g.id === gameId) ? gameId : null;
@@ -57,7 +58,7 @@ export function Board() {
     const q = query.trim().toLowerCase();
     const list = sportBoard.filter(
       (p) =>
-        (activeStat === 'All' || p.statType === activeStat) &&
+        (activeStat === 'All' || (activeStat === 'Venom & Shield' ? !!p.tier && p.tier !== 'standard' : p.statType === activeStat)) &&
         (!activeGame || p.game.id === activeGame) &&
         (!q ||
           p.player.name.toLowerCase().includes(q) ||
@@ -72,7 +73,8 @@ export function Board() {
   }, [sportBoard, activeStat, activeGame, query, sort]);
 
   const selectedMap = useMemo(() => new Map(picks.map((p) => [p.projectionId, p.direction])), [picks]);
-  const mult = maxMultiplier(playType, picks.length);
+  const { byId, realMoney, boardLoaded } = useStore();
+  const mult = playType === 'power' ? entryMultiplier(picks.map((p) => byId.get(p.projectionId)!).filter(Boolean)) : maxMultiplier(playType, picks.length);
 
   const changeSport = (id: SportId | 'SPECIALS') => {
     haptic(6);
@@ -185,7 +187,18 @@ export function Board() {
           </label>
         </div>
 
-        {visible.length === 0 ? (
+        {realMoney && !boardLoaded && visible.length === 0 ? (
+          <div className="grid" aria-busy="true" aria-label="Loading the board">
+            {Array.from({ length: 6 }, (_, i) => (
+              <div key={i} className="pcard skeleton">
+                <span className="sk sk-meta" />
+                <span className="sk sk-name" />
+                <span className="sk sk-line" />
+                <span className="sk sk-btns" />
+              </div>
+            ))}
+          </div>
+        ) : visible.length === 0 ? (
           <div className="empty">
             <p>No projections match.</p>
             <button

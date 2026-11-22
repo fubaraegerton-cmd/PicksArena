@@ -290,6 +290,59 @@ Migration `…_operator_console.sql`, server `server/console.ts`, UI `src/pages/
 
 ---
 
+## 12. Venom & Shield lines, worldwide sign-up, native shell
+
+Migration `…_venom_shield_and_countries.sql`.
+
+**Venom and Shield (tiered alternate lines).** PicksArena's own take on boosted/discounted alt lines.
+1. A projection has a `tier` (`standard`, `venom`, `shield`) and a `payout_factor`. Venom = a harder
+   line paying more (factor above 1, at most 5). Shield = an easier line paying less (0.25 to below 1).
+   A check constraint keeps tier and factor consistent; one open line per player/stat/tier.
+2. Tiered picks are **More only** and **Power Play only** (enforced in `place_entry_unchecked` and in
+   `validateLineup` in the app, with matching messages).
+3. Payout = power table × product of the factors, rounded to 2 decimals, capped at 1000×
+   (`entry_multiplier`). Each pick snapshots its factor (`entry_picks.payout_factor`), so later edits
+   never change a placed entry. If a leg pushes or is voided, its factor drops out with it.
+4. A player can still only have one pick per player in an entry, so a Venom line is an alternative
+   to the standard line, not an add-on.
+5. **Automatic Venom lines.** When an operator posts a standard line, the Admin form (switch "Auto
+   Venom line", on by default) also posts the Venom alternate: `autoVenom(line)` in
+   `src/shared/admin.ts` moves the line up about 15% (at least one whole step, so .5 lines stay .5)
+   and sets the factor to `1 + 2.5 × step / line`, rounded to 0.05, between 1.25 and 3.
+   Examples: 20.5 → 23.5 at ×1.35; 6.5 → 7.5 at ×1.4; 0.5 → 1.5 at ×3. Skipped if a Venom line already
+   exists. Operators can still post Venom/Shield lines by hand with their own factor.
+   The demo board generates Venom and Shield alternates on its own.
+6. UI: purple Venom / teal Shield cards with a "Venom ×1.5" flag and a single "More" button;
+   "Venom & Shield" filter chip; slip and ticket show the factored multiplier; rules on How to play.
+
+**Worldwide registration.**
+1. `countries` table: all 250 ISO 3166 codes, **every one off by default** (fail closed), `min_age` 18
+   (US 21). Enable a country only where you hold a licence: Admin → Compliance → Countries.
+2. US play is still decided state by state through `jurisdictions`; other countries by the country row
+   (`place_enabled(country, region)`). The age rule is the stricter of home and current location
+   (`min_age_for_place`). Geofence decisions now say `country_not_eligible` or `state_not_eligible`.
+3. Sign-up asks for the country (pre-filled from the browser language); state only for the US.
+   `profiles.country` defaults to `US`. Currency stays USD for now.
+
+**Native look and feel.**
+- `src/components/NativeDialog.tsx`: `askConfirm` / `askPrompt` replace `window.confirm/prompt`;
+  bottom action sheet on phones, centred dialog from 720px.
+- `src/components/NativeShell.tsx`: large page titles collapse into the top bar on scroll;
+  tab switches use the View Transitions API (skipped with reduced motion); pull-to-refresh on touch
+  devices reloads the board and the account (`refreshAll` in the store).
+- Skeleton cards while the real-money board loads.
+
+**Found in testing:** a leftover demo Specials list made the board open on Specials (tests now
+open `/board?sport=NBA`); started demo games disable their cards (tests skip them).
+
+**On copying another operator's lines:** we do not scrape or mirror a competitor's board (their
+terms forbid it, the lines are their work product, and it is a legal risk for a licensed real-money
+operator). For live data, use a licensed sports-data feed (e.g. SportsDataIO, Sportradar, Genius
+Sports) behind an import adapter that creates games and standard lines; Venom lines then follow
+automatically via `autoVenom`.
+
+---
+
 ## Pre-launch: reset the database to a clean ledger
 
 Testing writes sandbox transactions to the append-only ledger, which can't be deleted row by row
@@ -301,7 +354,7 @@ Testing writes sandbox transactions to the append-only ledger, which can't be de
    then `delete from supabase_migrations.schema_migrations;`.
 3. Re-apply every file in `supabase/migrations/` in order (Management API or the SQL editor) and
    record each version in `supabase_migrations.schema_migrations`.
-4. Re-enable your licensed states in **Admin → Compliance**; re-flag your operator account
+4. Re-enable your licensed states and countries in **Admin → Compliance**; re-flag your operator account
    (`app_metadata.role = 'operator'`).
 5. Run `select * from ledger_reconcile(); select * from reconcile_payments();` — both empty.
 
@@ -337,6 +390,11 @@ Never do this after launch. From launch on, corrections are new ledger transacti
 | Force-settle per leg, not per entry | Keeps settlement in one code path; the entry re-prices normally |
 | Reason codes for declines and failures | Consistent decisions and reportable outcomes |
 | Operators can't revoke themselves | Avoids locking the house out |
+| Venom/Shield as a factor on the power table, capped at 1000× | One payout formula; the factor is snapshotted per pick |
+| Tiered picks More-only and Power-only | No cheap "Less on the harder line" arbitrage; flex tables stay simple |
+| Venom lines generated by a fixed formula | Consistent, explainable pricing; operators can still hand-set |
+| Countries off by default, US still per state | Fail closed; each market needs its own licence |
+| No scraping of competitors' boards | Terms of service, IP and licensing risk; use a licensed data feed |
 
 ---
 

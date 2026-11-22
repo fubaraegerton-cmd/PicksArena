@@ -1,7 +1,7 @@
 import type { Entry } from '../types';
 import { statSpread } from '../data/generate';
 import { normal } from './random';
-import { payoutMultiplier } from './payouts';
+import { POWER_TABLE, factorOf, payoutMultiplier } from './payouts';
 
 /**
  * Settle an open entry. Picks with a real final stat (entered by an admin) use it;
@@ -22,7 +22,13 @@ export function settleEntry(
     return { ...p, actual, result: hit ? ('hit' as const) : ('miss' as const) };
   });
   const hits = picks.filter((p) => p.result === 'hit').length;
-  const mult = payoutMultiplier(entry.playType, picks.length, hits);
+  const factor = picks.filter((p) => p.result === 'hit').reduce((f, p) => f * factorOf(p.projection), 1);
+  const mult =
+    entry.playType === 'power'
+      ? hits === picks.length
+        ? Math.min(Math.round((POWER_TABLE[hits] ?? 0) * factor * 100) / 100, 1000)
+        : 0
+      : payoutMultiplier(entry.playType, picks.length, hits);
   const payout = Math.round(entry.amount * mult * 100) / 100;
   return { ...entry, picks, payout, status: payout > 0 ? 'won' : 'lost' };
 }

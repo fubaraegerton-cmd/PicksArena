@@ -143,7 +143,7 @@ async function operatorAction(body: AdminAction & { baseVersion?: number }, act:
           return json({ error: (e as Error).message }, e instanceof ConsoleError ? 422 : 500);
         }
       }
-      if (act === 'setJurisdiction' || act === 'kycDecision' || act === 'setBlocked')
+      if (act === 'setJurisdiction' || act === 'setCountry' || act === 'kycDecision' || act === 'setBlocked')
         return await complianceAction(body as unknown as ComplianceAction, by);
       await applySlateAction(body);
       return json({ data: await loadSlate('operator') });
@@ -210,6 +210,7 @@ async function creditFunds(b: CreditFunds): Promise<Response> {
 
 type ComplianceAction =
   | { action: 'setJurisdiction'; state: string; enabled: boolean; minAge: number }
+  | { action: 'setCountry'; code: string; enabled: boolean; minAge: number }
   | { action: 'kycDecision'; recordId: number; status: 'approved' | 'rejected'; reason?: string }
   | { action: 'setBlocked'; userId: string; blocked: boolean };
 
@@ -226,17 +227,19 @@ async function emailsById(): Promise<Map<string, string>> {
 
 /** Operator compliance view: eligible states, ID review queue, flagged accounts, recent location denials. */
 async function complianceView() {
-  const [j, k, f, g, emails] = await Promise.all([
+  const [j, c, k, f, g, emails] = await Promise.all([
     db().from('jurisdictions').select('state, name, enabled, min_age, updated_at, updated_by').order('name'),
+    db().from('countries').select('code, name, enabled, min_age, updated_at, updated_by').neq('code', 'US').order('name'),
     db().from('kyc_records').select('id, user_id, provider, status, reason, created_at').in('status', ['pending', 'review']).order('created_at').limit(200),
     db().from('profiles').select('id, state, kyc_status, flags, dob').neq('flags', '{}').limit(200),
     db().from('geo_checks').select('id, user_id, action, region, country, is_vpn, reason, created_at').eq('decision', 'deny').order('created_at', { ascending: false }).limit(50),
     emailsById(),
   ]);
-  for (const r of [j, k, f, g]) if (r.error) throw new Error(r.error.message);
+  for (const r of [j, c, k, f, g]) if (r.error) throw new Error(r.error.message);
   const email = (id: string) => emails.get(id) ?? id;
   return {
     jurisdictions: j.data,
+    countries: c.data,
     kycQueue: (k.data ?? []).map((r) => ({ ...r, email: email(r.user_id as string) })),
     flagged: (f.data ?? []).map((r) => ({ ...r, email: email(r.id as string) })),
     geoDenials: (g.data ?? []).map((r) => ({ ...r, email: email(r.user_id as string) })),
@@ -255,6 +258,17 @@ async function complianceAction(a: ComplianceAction, by: string): Promise<Respon
       .eq('state', state);
     if (error) return json({ error: error.message }, 500);
     if (!count) return json({ error: 'Unknown state.' }, 404);
+  } else if (a.action === 'setCountry') {
+    const code = String(a.code ?? '').toUpperCase();
+    const minAge = Number(a.minAge);
+    if (!/^[A-Z]{2}$/.test(code) || code === 'US') return json({ error: 'Unknown country. US play is set state by state.' }, 422);
+    if (!Number.isInteger(minAge) || minAge < 18 || minAge > 25) return json({ error: 'Minimum age must be 18 to 25.' }, 422);
+    const { error, count } = await db()
+      .from('countries')
+      .update({ enabled: !!a.enabled, min_age: minAge, updated_at: new Date().toISOString(), updated_by: by }, { count: 'exact' })
+      .eq('code', code);
+    if (error) return json({ error: error.message }, 500);
+    if (!count) return json({ error: 'Unknown country.' }, 404);
   } else if (a.action === 'kycDecision') {
     if (!['approved', 'rejected'].includes(a.status)) return json({ error: 'Choose approve or reject.' }, 422);
     if (a.status === 'rejected' && !(a.reason ?? '').trim()) return json({ error: 'Give a reason for rejecting.' }, 422);

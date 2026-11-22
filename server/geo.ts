@@ -27,8 +27,9 @@ export interface GeoResult {
 
 export const GEO_MESSAGES: Record<string, string> = {
   location_unknown: 'We couldn’t confirm your location. Turn off any VPN or private relay and try again.',
-  outside_us: 'PicksArena is only available in eligible US states.',
-  state_not_eligible: 'PicksArena isn’t available in your current state yet.',
+  outside_us: 'Real-money play isn’t available where you are yet.',
+  state_not_eligible: 'Real-money play isn’t available in your current state yet.',
+  country_not_eligible: 'Real-money play isn’t available in your country yet. You can still browse the board.',
   vpn_or_proxy: 'Turn off your VPN, proxy or private relay to play.',
   vpn_check_unavailable: 'We couldn’t verify your connection right now. Try again in a moment.',
 };
@@ -75,14 +76,13 @@ export async function checkLocation(req: Request, userId: string, action: GeoAct
   if (isVpn !== null) provider += '+ipinfo';
 
   let reason: string | null = null;
-  if (!country || !region) reason = 'location_unknown';
-  else if (country !== 'US') reason = 'outside_us';
+  if (!country || (country === 'US' && !region)) reason = 'location_unknown';
   else if (isVpn === true) reason = 'vpn_or_proxy';
   else if (isVpn === null && process.env.GEO_REQUIRE_VPN_CHECK === 'true') reason = 'vpn_check_unavailable';
   else {
-    const { data, error } = await db().from('jurisdictions').select('enabled').eq('state', region).maybeSingle();
+    const { data, error } = await db().rpc('place_enabled', { p_country: country, p_region: region });
     if (error) throw new Error(error.message);
-    if (!data?.enabled) reason = 'state_not_eligible';
+    if (data !== true) reason = country === 'US' ? 'state_not_eligible' : 'country_not_eligible';
   }
 
   const decision = reason ? 'deny' : 'allow';

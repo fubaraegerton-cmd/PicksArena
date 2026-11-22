@@ -78,6 +78,29 @@ export function generateBoard(dayKey: string, now = Date.now()): Projection[] {
               tag: r < 0.08 ? 'hot' : r < 0.16 ? 'trending' : undefined,
               moreShare: Math.round(30 + rand() * 45),
             });
+            // Some lines get a Venom (harder, pays more) or Shield (easier, pays less) alternate.
+            const base = toLine(v, 0);
+            const alt = rand();
+            const step = Math.max(1, Math.round(s.spread * 0.6));
+            if (alt < 0.1) {
+              projections.push({
+                id: `${player.id}-${s.stat.replace(/\W+/g, '')}-venom`,
+                player, game, opponent, statType: s.stat,
+                line: base + step,
+                tier: 'venom',
+                payoutFactor: [1.5, 1.75, 2][Math.floor(rand() * 3)],
+                moreShare: Math.round(20 + rand() * 30),
+              });
+            } else if (alt < 0.2 && base - step > 0) {
+              projections.push({
+                id: `${player.id}-${s.stat.replace(/\W+/g, '')}-shield`,
+                player, game, opponent, statType: s.stat,
+                line: base - step,
+                tier: 'shield',
+                payoutFactor: [0.5, 0.6, 0.75][Math.floor(rand() * 3)],
+                moreShare: Math.round(55 + rand() * 30),
+              });
+            }
           }
         }
       }

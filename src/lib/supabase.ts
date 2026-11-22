@@ -69,6 +69,7 @@ export interface Profile {
   id: string;
   dob: string | null;
   state: string | null;
+  country?: string;
   kyc_status: string;
   self_exclusion_until: string | null;
 }
@@ -85,8 +86,15 @@ export async function eligibleStates(): Promise<{ state: string; name: string; m
   const { data } = await supabase.from('jurisdictions').select('state, name, min_age').eq('enabled', true).order('name');
   return data ?? [];
 }
-export const saveProfile = (dob: string, state: string) =>
-  call<{ profile: Profile }>('/api/rm/profile', { method: 'POST', body: JSON.stringify({ dob, state }) });
+export const saveProfile = (dob: string, state: string | null, country: string) =>
+  call<{ profile: Profile }>('/api/rm/profile', { method: 'POST', body: JSON.stringify({ dob, state, country }) });
+
+/** All countries (for sign-up); real-money play is enabled per country by an operator. */
+export async function listCountries(): Promise<{ code: string; name: string; enabled: boolean; min_age: number }[]> {
+  if (!supabase) return [];
+  const { data } = await supabase.from('countries').select('code, name, enabled, min_age').order('name');
+  return data ?? [];
+}
 
 /** Projection ids on the board are "adm-<uuid>"; the server wants the bare uuid. */
 export const dbId = (projectionId: string) => projectionId.replace(/^adm-/, '');
@@ -128,6 +136,7 @@ interface EntryRow {
   entry_picks: {
     direction: Direction;
     line: number;
+    payout_factor: number;
     result: 'pending' | 'hit' | 'miss' | 'push' | 'void';
     final_value: number | null;
     projections: {
@@ -138,6 +147,7 @@ interface EntryRow {
       position: string;
       jersey: number | null;
       stat_type: string;
+      tier: 'standard' | 'venom' | 'shield';
       games: {
         id: string;
         sport: 'NBA' | 'NFL';
@@ -158,7 +168,7 @@ export async function fetchEntries(): Promise<Entry[]> {
   const { data, error } = await supabase!
     .from('entries')
     .select(
-      'id, created_at, stake_cents, pick_count, potential_payout_cents, status, payout_cents, entry_picks(direction, line, result, final_value, projections(id, player_id, player_name, team, position, jersey, stat_type, games(id, sport, home_team, away_team, home_color, away_color, home_name, away_name, starts_at)))',
+      'id, created_at, stake_cents, pick_count, potential_payout_cents, status, payout_cents, entry_picks(direction, line, payout_factor, result, final_value, projections(id, player_id, player_name, team, position, jersey, stat_type, tier, games(id, sport, home_team, away_team, home_color, away_color, home_name, away_name, starts_at)))',
     )
     .order('created_at', { ascending: false })
     .limit(100);
@@ -186,6 +196,8 @@ export async function fetchEntries(): Promise<Entry[]> {
         statType: pr.stat_type,
         line: Number(p.line),
         moreShare: 50,
+        tier: pr.tier ?? 'standard',
+        payoutFactor: Number(p.payout_factor ?? 1),
       };
       return {
         projection,

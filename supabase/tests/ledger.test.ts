@@ -92,7 +92,7 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
     await admin.end();
     db = new pg.Pool({ host: HOST, port: PORT, user: USER, database: DB, max: 6 });
     await db.query(read('tests/supabase_shim.sql'));
-    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments', '20261122000005_responsible_gaming_audit', '20261122000006_limit_usage_checkout_window', '20261123000007_operator_console'])
+    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments', '20261122000005_responsible_gaming_audit', '20261122000006_limit_usage_checkout_window', '20261123000007_operator_console', '20261124000008_venom_shield_and_countries'])
       await db.query(read(`migrations/${m}.sql`));
     await db.query(`update public.jurisdictions set enabled = true where state in ('NJ', 'PA')`);
   });
@@ -807,6 +807,82 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
       await q(`insert into auth.sessions (user_id, user_agent, ip) values ($1, 'Mozilla/5.0 test', '203.0.113.9')`, [u]);
       const rows = await q<{ s: Record<string, unknown> }>(`select public.player_sessions($1) as s`, [u]);
       expect(rows[0].s).toMatchObject({ user_agent: 'Mozilla/5.0 test', ip: '203.0.113.9' });
+    });
+  });
+
+  describe('Venom/Shield picks and countries', () => {
+    async function tiered(gameId: string, team: string, line: number, tier: 'venom' | 'shield', factor: number, player = randomUUID()) {
+      return (await one<{ id: string }>(
+        `insert into public.projections (game_id, slate_date, player_id, player_name, team, position, stat_type, line, tier, payout_factor)
+         values ($1, current_date, $2, 'Tier Player', $3, 'G', 'Points', $4, $5, $6) returning id`,
+        [gameId, player, team, line, tier, factor],
+      ))!.id;
+    }
+
+    it('rejects a factor that doesn’t match the tier', async () => {
+      const g = await game(90, 'TFA', 'TFB');
+      await expect(tiered(g, 'TFA', 30.5, 'venom', 0.8)).rejects.toThrow(/projections_tier_factor/);
+      await expect(tiered(g, 'TFA', 30.5, 'shield', 1.5)).rejects.toThrow(/projections_tier_factor/);
+    });
+
+    it('Venom and Shield are More-only and multiply the payout', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      const v = await tiered(s.g1, 'HAR', 30.5, 'venom', 1.5);
+      await expect(place(u, [{ id: v, d: 'less' }, { id: s.b, d: 'less' }], 1_000)).rejects.toThrow(/tiered_more_only/);
+      const e = (await place(u, [{ id: v, d: 'more' }, { id: s.b, d: 'less' }, { id: s.c, d: 'more' }], 1_000))!;
+      expect(Number(e.multiplier)).toBe(7.5);
+      expect(Number(e.potential_payout_cents)).toBe(7_500);
+      await grade(v, 33);
+      await grade(s.b, 4);
+      await grade(s.c, 9);
+      const done = (await entry(e.id))!;
+      expect([done.status, Number(done.payout_cents), Number(done.settled_multiplier)]).toEqual(['won', 7_500, 7.5]);
+
+      const sh = await tiered(s.g2, 'CAP', 12.5, 'shield', 0.6);
+      const e2 = (await place(u, [{ id: sh, d: 'more' }, { id: s.f, d: 'less' }], 1_000))!;
+      expect(Number(e2.multiplier)).toBe(1.8);
+    });
+
+    it('a pushed or voided tiered leg drops its factor when re-pricing', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      const v = await tiered(s.g1, 'HAR', 30, 'venom', 2);
+      const e = (await place(u, [{ id: v, d: 'more' }, { id: s.b, d: 'less' }, { id: s.c, d: 'more' }], 1_000))!;
+      expect(Number(e.multiplier)).toBe(10);
+      await grade(v, 30); // push: drops out, factor and all
+      await grade(s.b, 4);
+      await grade(s.c, 9);
+      const done = (await entry(e.id))!;
+      expect([done.status, Number(done.settled_multiplier), Number(done.payout_cents)]).toEqual(['won', 3, 3_000]);
+    });
+
+    it('keeps one pick per player across a standard line and its Venom line', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      const player = (await one<{ player_id: string }>(`select player_id from public.projections where id = $1`, [s.a]))!.player_id;
+      const v = await tiered(s.g1, 'HAR', 30.5, 'venom', 1.5, player);
+      await expect(place(u, [{ id: s.a, d: 'more' }, { id: v, d: 'more' }, { id: s.b, d: 'less' }], 1_000)).rejects.toThrow(/one_pick_per_player/);
+    });
+
+    it('plays outside the US only in countries an operator has enabled, at that country’s age', async () => {
+      const s = await slate();
+      const u = await user();
+      await deposit(u, 10_000);
+      const nineteen = new Date(Date.now() - 19.5 * 365.25 * 864e5).toISOString().slice(0, 10);
+      await q(`update public.profiles set country = 'GB', state = null, dob = $2 where id = $1`, [u, nineteen]);
+      const gb = async () =>
+        (await one<{ id: string }>(`insert into public.geo_checks (user_id, action, region, country, provider, decision) values ($1, 'entry', 'ENG', 'GB', 'test', 'allow') returning id`, [u]))!.id;
+      const picks = [{ id: s.a, d: 'more' as const }, { id: s.b, d: 'less' as const }];
+      await expect(place(u, picks, 1_000, undefined, await gb())).rejects.toThrow(/location_not_eligible/);
+      await q(`update public.countries set enabled = true, min_age = 18 where code = 'GB'`);
+      expect((await place(u, picks, 1_000, undefined, await gb()))!.status).toBe('open');
+      await q(`update public.countries set min_age = 21 where code = 'GB'`);
+      await expect(place(u, [{ id: s.c, d: 'more' }, { id: s.d, d: 'less' }], 1_000, undefined, await gb())).rejects.toThrow(/under_age/);
+      await q(`update public.countries set enabled = false, min_age = 18 where code = 'GB'`);
     });
   });
 

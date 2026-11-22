@@ -32,6 +32,8 @@ export function adminProjections(data: AdminData): Projection[] {
       statType: pk.statType,
       line: pk.line,
       moreShare: 50,
+      tier: pk.tier ?? 'standard',
+      payoutFactor: pk.payoutFactor ?? 1,
     });
   }
   return out;

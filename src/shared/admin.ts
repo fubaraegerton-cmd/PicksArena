@@ -42,6 +42,35 @@ export interface AdminPick {
   /** Final stat entered by the admin; settles entries */
   actual?: number;
   createdAt: number;
+  /** Alternate line: Venom (harder, pays more) or Shield (easier, pays less). More-only. */
+  tier?: PickTier;
+  /** Multiplies the entry payout: > 1 for Venom, < 1 for Shield, 1 for standard */
+  payoutFactor?: number;
+}
+
+export type PickTier = 'standard' | 'venom' | 'shield';
+
+/**
+ * The automatic Venom alternate for a standard line: a harder line (about 15% higher, at least one
+ * whole step so .5 lines stay .5) that pays more. The factor grows with how far the line moved:
+ * 1 + 2.5 × (step / line), rounded to 0.05 and kept between 1.25 and 3.
+ *   20.5 points  -> 23.5 at ×1.35      6.5 assists -> 7.5 at ×1.4      0.5 home runs -> 1.5 at ×3
+ */
+export function autoVenom(line: number): { line: number; payoutFactor: number } {
+  const step = Math.max(1, Math.round(line * 0.15));
+  const raw = 1 + (2.5 * step) / Math.max(line, 0.5);
+  const payoutFactor = Math.min(3, Math.max(1.25, Math.round(raw * 20) / 20));
+  return { line: Math.min(999.5, line + step), payoutFactor: Math.round(payoutFactor * 100) / 100 };
+}
+
+/** Validates a Venom/Shield factor. Returns an error message or null. */
+export function tierError(tier: PickTier | undefined, factor: number | undefined): string | null {
+  if (!tier || tier === 'standard') return null;
+  if (typeof factor !== 'number' || !Number.isFinite(factor)) return 'Enter the payout factor.';
+  if (Math.round(factor * 100) !== factor * 100) return 'Use at most two decimals for the factor.';
+  if (tier === 'venom' && (factor <= 1 || factor > 5)) return 'A Venom factor must be above 1 and at most 5 (e.g. 1.5).';
+  if (tier === 'shield' && (factor < 0.25 || factor >= 1)) return 'A Shield factor must be from 0.25 to below 1 (e.g. 0.6).';
+  return null;
 }
 
 export interface AdminData {
@@ -57,7 +86,12 @@ export type AdminAction =
   | { action: 'createGame'; game: Omit<AdminGame, 'id' | 'createdAt' | 'status'> }
   | { action: 'updateGame'; id: string; patch: Partial<Pick<AdminGame, 'status' | 'startsAt'>> }
   | { action: 'deleteGame'; id: string }
-  | { action: 'createPick'; pick: Omit<AdminPick, 'id' | 'createdAt' | 'actual' | 'active'> & { active?: boolean } }
+  | {
+      action: 'createPick';
+      pick: Omit<AdminPick, 'id' | 'createdAt' | 'actual' | 'active'> & { active?: boolean };
+      /** Also post the automatic Venom alternate (standard lines only; skipped if one already exists). */
+      autoVenom?: boolean;
+    }
   | {
       action: 'updatePick';
       id: string;
@@ -122,10 +156,11 @@ export function validateAction(a: AdminAction, data: AdminData, opts: { allowWho
         (x) =>
           x.gameId === p.gameId &&
           x.playerName.trim().toLowerCase() === p.playerName.trim().toLowerCase() &&
-          x.statType.trim().toLowerCase() === p.statType.trim().toLowerCase(),
+          x.statType.trim().toLowerCase() === p.statType.trim().toLowerCase() &&
+          (x.tier ?? 'standard') === (p.tier ?? 'standard'),
       );
-      if (dupe) return 'That player already has a pick for this stat in this game.';
-      return lineError(p.line, opts.allowWholeLines);
+      if (dupe) return 'That player already has a line of this type for this stat in this game.';
+      return tierError(p.tier, p.payoutFactor) ?? lineError(p.line, opts.allowWholeLines);
     }
     case 'updatePick': {
       const pick = data.picks.find((p) => p.id === a.id);
@@ -183,8 +218,17 @@ export function applyAction(a: AdminAction, data: AdminData, makeId: () => strin
         special: !!a.pick.special,
         note: a.pick.note?.trim() || undefined,
         active: a.pick.active ?? true,
+        tier: a.pick.tier ?? 'standard',
+        payoutFactor: a.pick.tier && a.pick.tier !== 'standard' ? a.pick.payoutFactor : 1,
         createdAt: now,
       });
+      if (a.autoVenom && (a.pick.tier ?? 'standard') === 'standard') {
+        const std = d.picks[d.picks.length - 1];
+        const exists = d.picks.some(
+          (x) => x.gameId === std.gameId && x.playerName.toLowerCase() === std.playerName.toLowerCase() && x.statType.toLowerCase() === std.statType.toLowerCase() && x.tier === 'venom',
+        );
+        if (!exists) d.picks.push({ ...std, id: makeId(), ...autoVenom(std.line), tier: 'venom', special: false });
+      }
       break;
     case 'updatePick':
       d.picks = d.picks.map((p) => {

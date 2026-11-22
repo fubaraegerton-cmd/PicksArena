@@ -59,6 +59,7 @@ export function adminDo(password: string, action: AdminAction, baseVersion: numb
 
 export interface ComplianceData {
   jurisdictions: { state: string; name: string; enabled: boolean; min_age: number; updated_at: string; updated_by: string | null }[];
+  countries?: { code: string; name: string; enabled: boolean; min_age: number }[];
   kycQueue: { id: number; user_id: string; email: string; provider: string; status: string; created_at: string }[];
   flagged: { id: string; email: string; state: string | null; kyc_status: string; flags: Record<string, unknown> }[];
   geoDenials: { id: number; email: string; action: string; region: string | null; country: string | null; is_vpn: boolean | null; reason: string | null; created_at: string }[];

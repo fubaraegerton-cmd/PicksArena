@@ -1,4 +1,5 @@
 import { useStore } from '../store';
+import { askConfirm } from '../components/NativeDialog';
 import { money } from '../lib/format';
 import { haptic, useInstallPrompt, useTheme, type ThemePref } from '../lib/device';
 import { Link } from 'react-router-dom';
@@ -213,7 +214,7 @@ export function Account() {
           type="button"
           className="row-card danger"
           onClick={() => {
-            if (confirm('Reset your balance to $100 and delete all entries?')) resetAccount();
+            askConfirm({ title: 'Reset your account?', message: 'Your balance goes back to $100 and all entries are deleted.', confirmLabel: 'Reset', destructive: true }).then((ok) => ok && resetAccount());
           }}
         >
           <Icon name="trash" size={18} />

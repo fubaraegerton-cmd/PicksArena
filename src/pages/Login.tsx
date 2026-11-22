@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store';
-import { eligibleStates, saveProfile, supabase } from '../lib/supabase';
+import { eligibleStates, listCountries, saveProfile, supabase } from '../lib/supabase';
 import { Icon } from '../components/Icon';
 
 const STATES: [string, string][] = [
@@ -25,7 +25,24 @@ function maxDob(): string {
   return d.toISOString().slice(0, 10);
 }
 
-function ProfileFields({ dob, setDob, state, setState }: { dob: string; setDob: (v: string) => void; state: string; setState: (v: string) => void }) {
+type CountryRow = { code: string; name: string; enabled: boolean; min_age: number };
+
+/** Best guess at the player's country from the browser (e.g. en-GB → GB); they can change it. */
+function guessCountry(): string {
+  const m = /-([A-Z]{2})\b/.exec(navigator.language || '');
+  return m ? m[1] : 'US';
+}
+
+function ProfileFields(props: {
+  dob: string;
+  setDob: (v: string) => void;
+  state: string;
+  setState: (v: string) => void;
+  country: string;
+  setCountry: (v: string) => void;
+  countries: CountryRow[];
+}) {
+  const { dob, setDob, state, setState, country, setCountry, countries } = props;
   return (
     <>
       <label className="field">
@@ -33,18 +50,30 @@ function ProfileFields({ dob, setDob, state, setState }: { dob: string; setDob: 
         <input type="date" value={dob} max={maxDob()} onChange={(e) => setDob(e.target.value)} required autoComplete="bday" />
       </label>
       <label className="field">
-        <span>State you live in</span>
-        <select value={state} onChange={(e) => setState(e.target.value)} required autoComplete="address-level1">
-          <option value="" disabled>
-            Choose your state…
-          </option>
-          {STATES.map(([c, n]) => (
-            <option key={c} value={c}>
-              {n}
+        <span>Country you live in</span>
+        <select value={country} onChange={(e) => setCountry(e.target.value)} required autoComplete="country">
+          {(countries.length ? countries : [{ code: 'US', name: 'United States', enabled: false, min_age: 21 }]).map((c) => (
+            <option key={c.code} value={c.code}>
+              {c.name}
             </option>
           ))}
         </select>
       </label>
+      {country === 'US' && (
+        <label className="field">
+          <span>State you live in</span>
+          <select value={state} onChange={(e) => setState(e.target.value)} required autoComplete="address-level1">
+            <option value="" disabled>
+              Choose your state…
+            </option>
+            {STATES.map(([c, n]) => (
+              <option key={c} value={c}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
     </>
   );
 }
@@ -59,6 +88,19 @@ export function Login() {
   const [password, setPassword] = useState('');
   const [dob, setDob] = useState('');
   const [state, setState] = useState('');
+  const [country, setCountry] = useState(guessCountry);
+  const [countries, setCountries] = useState<CountryRow[]>([]);
+  useEffect(() => {
+    listCountries()
+      .then((c) => {
+        setCountries(c);
+        if (c.length && !c.some((x) => x.code === country)) setCountry('US');
+      })
+      .catch(() => setCountries([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const profileReady = !!dob && (country !== 'US' || !!state);
+  const fieldProps = { dob, setDob, state, setState, country, setCountry, countries };
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -82,6 +124,7 @@ export function Login() {
       const m = data.user?.user_metadata ?? {};
       if (typeof m.dob === 'string') setDob((d) => d || m.dob);
       if (typeof m.state === 'string') setState((s) => s || m.state);
+      if (typeof m.country === 'string') setCountry(m.country);
     });
   }, [session, profile]);
 
@@ -111,7 +154,7 @@ export function Login() {
   const finishSetup = async (e: FormEvent) => {
     e.preventDefault();
     await run(async () => {
-      await saveProfile(dob, state);
+      await saveProfile(dob, country === 'US' ? state : null, country);
       await refreshAccount();
       navigate(next);
     });
@@ -137,11 +180,11 @@ export function Login() {
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: { dob, state }, emailRedirectTo: `${location.origin}/login?next=${encodeURIComponent(next)}` },
+        options: { data: { dob, state: country === 'US' ? state : null, country }, emailRedirectTo: `${location.origin}/login?next=${encodeURIComponent(next)}` },
       });
       if (error) throw error;
       if (data.session) {
-        await saveProfile(dob, state);
+        await saveProfile(dob, country === 'US' ? state : null, country);
         await refreshAccount();
         navigate(next);
       } else {
@@ -167,9 +210,9 @@ export function Login() {
         </header>
         <form className="adm-card adm-login" onSubmit={finishSetup}>
           <p className="muted">We need your date of birth and state before you can play. You can’t change your date of birth later.</p>
-          <ProfileFields dob={dob} setDob={setDob} state={state} setState={setState} />
+          <ProfileFields {...fieldProps} />
           {error && <p className="ticket-error">{error}</p>}
-          <button type="submit" className="cta" disabled={busy || !dob || !state}>
+          <button type="submit" className="cta" disabled={busy || !profileReady}>
             <span>{busy ? 'Saving…' : 'Save and continue'}</span>
             <Icon name="arrow" size={18} />
           </button>
@@ -234,7 +277,7 @@ export function Login() {
             />
           </label>
         )}
-        {mode === 'signup' && <ProfileFields dob={dob} setDob={setDob} state={state} setState={setState} />}
+        {mode === 'signup' && <ProfileFields {...fieldProps} />}
         {info && <p className="adm-banner">{info}</p>}
         {error && <p className="ticket-error">{error}</p>}
         <button type="submit" className="cta" disabled={busy}>
@@ -253,9 +296,15 @@ export function Login() {
         )}
         {mode === 'signup' && (
           <p className="fine left">
-            {eligible && eligible.length
-              ? `Real-money play is open in ${eligible.map((e) => `${e.name} (${e.min_age}+)`).join(', ')}. You can create an account anywhere, but you can only play while you’re in one of these states.`
-              : 'Real-money play isn’t open in any state yet. You can create an account now and play once your state opens.'}
+            {(() => {
+              const places = [
+                ...(eligible ?? []).map((e) => `${e.name} (${e.min_age}+)`),
+                ...countries.filter((c) => c.enabled && c.code !== 'US').map((c) => `${c.name} (${c.min_age}+)`),
+              ];
+              return places.length
+                ? `Anyone can create an account. Real-money play is open in ${places.join(', ')}, and only while you’re there.`
+                : 'Anyone can create an account. Real-money play isn’t open anywhere yet; you’ll be able to play once it opens where you are.';
+            })()}
           </p>
         )}
       </form>

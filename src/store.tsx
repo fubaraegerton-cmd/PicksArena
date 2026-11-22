@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { Direction, Entry, Pick, PlayType, Projection } from './types';
 import { generateBoard } from './data/generate';
-import { MAX_PICKS, flexAvailable, maxMultiplier, validateLineup } from './lib/payouts';
+import { MAX_PICKS, entryMultiplier, flexAvailable, isTiered, maxMultiplier, validateLineup } from './lib/payouts';
 import { fullyResulted, settleEntry } from './lib/simulate';
 import { EMPTY_DATA, type AdminData } from './shared/admin';
 import { adminActuals, adminProjections } from './lib/adminBoard';
@@ -86,6 +86,10 @@ interface Store {
   accountLoaded: boolean;
   wallet: Wallet | null;
   refreshAccount: () => Promise<void>;
+  /** Reload the board and (in real-money mode) the account — used by pull-to-refresh. */
+  refreshAll: () => Promise<void>;
+  /** False until the first board fetch has finished (for loading skeletons). */
+  boardLoaded: boolean;
   signOut: () => Promise<void>;
   settle: (entryId: string) => void;
   settleAll: () => void;
@@ -174,29 +178,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const [boardLoaded, setBoardLoaded] = useState(false);
+  const fetchAdmin = useCallback(async () => {
+    try {
+      const res = await fetch('/api/board', { cache: 'no-store' });
+      if (!res.ok) return;
+      const d = (await res.json()) as AdminData;
+      if (Array.isArray(d.games)) setAdminData(d);
+    } catch {
+      /* offline — keep cached data */
+    } finally {
+      setBoardLoaded(true);
+    }
+  }, [setAdminData]);
+
   // Fetch admin games/picks on load, every minute, and when the app comes back to the foreground
   useEffect(() => {
     let alive = true;
-    const fetchAdmin = async () => {
-      try {
-        const res = await fetch('/api/board', { cache: 'no-store' });
-        if (!res.ok) return;
-        const d = (await res.json()) as AdminData;
-        if (alive && Array.isArray(d.games)) setAdminData(d);
-      } catch {
-        /* offline — keep cached data */
-      }
-    };
     fetchAdmin();
-    const id = setInterval(fetchAdmin, 60_000);
-    const onVis = () => document.visibilityState === 'visible' && fetchAdmin();
+    const id = setInterval(() => alive && fetchAdmin(), 60_000);
+    const onVis = () => alive && document.visibilityState === 'visible' && fetchAdmin();
     document.addEventListener('visibilitychange', onVis);
     return () => {
       alive = false;
       clearInterval(id);
       document.removeEventListener('visibilitychange', onVis);
     };
-  }, [setAdminData]);
+  }, [fetchAdmin]);
 
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 30_000);
@@ -275,7 +283,9 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   // Flex isn't valid for 2-pick lineups (and isn't offered for real money); fall back to power
   const effectivePlayType: PlayType =
-    REAL_MONEY || (state.playType === 'flex' && !flexAvailable(state.picks.length)) ? 'power' : state.playType;
+    REAL_MONEY || (state.playType === 'flex' && !flexAvailable(state.picks.length)) || state.picks.some((p) => isTiered(byId.get(p.projectionId)))
+      ? 'power'
+      : state.playType;
 
   // A new ticket (picks or stake changed) gets a new idempotency key; retries of the same ticket reuse it.
   useEffect(() => {
@@ -329,7 +339,12 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       })),
       status: 'open',
       payout: 0,
-      potentialPayout: Math.round(state.amount * maxMultiplier(effectivePlayType, n) * 100) / 100,
+      potentialPayout:
+        Math.round(
+          state.amount *
+            (effectivePlayType === 'power' ? entryMultiplier(state.picks.map((p) => byId.get(p.projectionId)!)) : maxMultiplier(effectivePlayType, n)) *
+            100,
+        ) / 100,
     };
     setState((s) => ({
       ...s,
@@ -413,6 +428,10 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     accountLoaded,
     wallet,
     refreshAccount,
+    refreshAll: async () => {
+      await Promise.all([fetchAdmin(), refreshAccount()]);
+    },
+    boardLoaded,
     signOut,
     settle,
     settleAll,

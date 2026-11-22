@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties, type FormEvent } from 'react';
+import { askConfirm, askPrompt } from '../components/NativeDialog';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useStore } from '../store';
 import { SPORTS, sportById } from '../data/sports';
 import type { AdminAction, AdminData, AdminGame, AdminPick, AdminSport, AdminTeam } from '../shared/admin';
-import { EMPTY_DATA, lineError } from '../shared/admin';
+import { EMPTY_DATA, autoVenom, lineError, tierError, type PickTier } from '../shared/admin';
 import { AdminError, adminAudit, adminCompliance, adminCompliancePost, adminDo, adminLogin, adminPayments, adminPaymentsPost, rememberPassword, savedPassword, type AuditRow, type ComplianceData, type PaymentsData } from '../lib/adminApi';
 import { REAL_MONEY, supabase } from '../lib/supabase';
 import { OperatorsCard, PlayersTab } from './admin/Players';
@@ -21,6 +22,44 @@ const DENY_LABEL: Record<string, string> = {
   vpn_or_proxy: 'VPN or proxy',
   vpn_check_unavailable: 'VPN check failed',
 };
+
+function CountriesCard({ c, busy, act }: { c: ComplianceData; busy: boolean; act: (body: Record<string, unknown>, done?: string) => Promise<void> }) {
+  const [q, setQ] = useState('');
+  const list = (c.countries ?? []).filter((x) => !q || x.name.toLowerCase().includes(q.toLowerCase()) || x.code === q.toUpperCase());
+  const on = (c.countries ?? []).filter((x) => x.enabled);
+  return (
+    <section className="adm-card">
+      <header className="adm-card-head wrap">
+        <h2>Countries</h2>
+        <div className="adm-filters">
+          <span className="muted small">{on.length ? `${on.length} enabled: ${on.map((x) => x.code).join(', ')}` : 'None enabled outside the US.'}</span>
+          <input className="audit-email" type="search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Find a country" aria-label="Find a country" />
+        </div>
+      </header>
+      <p className="muted small">Anyone can register from any country. Switch a country on only where you hold a licence for it; players located there can then deposit and play. US play is set state by state above.</p>
+      <ul className="jur-grid">
+        {list.map((x) => (
+          <li key={x.code} className={x.enabled ? 'on' : ''}>
+            <label className="switch">
+              <input type="checkbox" checked={x.enabled} disabled={busy} onChange={(e) => act({ action: 'setCountry', code: x.code, enabled: e.target.checked, minAge: x.min_age }, `${x.name} ${e.target.checked ? 'enabled' : 'disabled'}`)} />
+              <span className="switch-ui" aria-hidden />
+              <span>
+                <strong>{x.name}</strong>
+              </span>
+            </label>
+            <select value={x.min_age} disabled={busy} aria-label={`${x.name} minimum age`} onChange={(e) => act({ action: 'setCountry', code: x.code, enabled: x.enabled, minAge: Number(e.target.value) }, `${x.name} minimum age ${e.target.value}`)}>
+              {[18, 19, 20, 21].map((a) => (
+                <option key={a} value={a}>
+                  {a}+
+                </option>
+              ))}
+            </select>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
 
 function ComplianceTab({ notify }: { notify: (m: string) => void }) {
   const [c, setC] = useState<ComplianceData | null>(null);
@@ -86,8 +125,8 @@ function ComplianceTab({ notify }: { notify: (m: string) => void }) {
                       type="button"
                       className="ghost-sm"
                       disabled={busy}
-                      onClick={() => {
-                        const reason = prompt('Reason for rejecting (shown in the audit trail):');
+                      onClick={async () => {
+                        const reason = await askPrompt({ title: `Reject ${k.email}?`, label: 'Reason (stored in the audit trail)', confirmLabel: 'Reject', destructive: true, required: true });
                         if (reason) act({ action: 'kycDecision', recordId: k.id, status: 'rejected', reason }, 'Identity rejected');
                       }}
                     >
@@ -167,6 +206,8 @@ function ComplianceTab({ notify }: { notify: (m: string) => void }) {
           ))}
         </ul>
       </section>
+
+      <CountriesCard c={c} busy={busy} act={act} />
 
       <OperatorsCard notify={notify} />
 
@@ -453,7 +494,10 @@ function PaymentsTab({ notify }: { notify: (m: string) => void }) {
                       type="button"
                       className="ghost-sm"
                       disabled={busy}
-                      onClick={() => confirm('Simulate a chargeback? The player’s account is frozen and unspent cash is clawed back.') && act({ action: 'simulateChargeback', paymentId: p.id })}
+                      onClick={async () =>
+                        (await askConfirm({ title: 'Simulate a chargeback?', message: 'The player’s account is frozen and unspent cash is clawed back.', confirmLabel: 'Simulate', destructive: true })) &&
+                        act({ action: 'simulateChargeback', paymentId: p.id })
+                      }
                     >
                       Simulate chargeback
                     </button>
@@ -987,7 +1031,10 @@ function GamesTab({ data, now, run, busy, go }: { data: AdminData; now: number; 
                         type="button"
                         className="ghost-sm"
                         disabled={busy}
-                        onClick={() => confirm(`Cancel ${g.away.abbr} @ ${g.home.abbr}? Its picks leave the board.`) && run({ action: 'updateGame', id: g.id, patch: { status: 'cancelled' } })}
+                        onClick={async () =>
+                          (await askConfirm({ title: `Cancel ${g.away.abbr} @ ${g.home.abbr}?`, message: 'Its picks leave the board and entries on it are refunded or re-priced.', confirmLabel: 'Cancel game', cancelLabel: 'Keep', destructive: true })) &&
+                          run({ action: 'updateGame', id: g.id, patch: { status: 'cancelled' } })
+                        }
                       >
                         Cancel
                       </button>
@@ -1002,7 +1049,10 @@ function GamesTab({ data, now, run, busy, go }: { data: AdminData; now: number; 
                       className="icon-btn danger"
                       aria-label="Delete game"
                       disabled={busy}
-                      onClick={() => confirm(`Delete ${g.away.abbr} @ ${g.home.abbr} and its ${count} pick(s)?`) && run({ action: 'deleteGame', id: g.id })}
+                      onClick={async () =>
+                        (await askConfirm({ title: `Delete ${g.away.abbr} @ ${g.home.abbr}?`, message: `This also deletes its ${count} pick${count === 1 ? '' : 's'}.`, confirmLabel: 'Delete', destructive: true })) &&
+                        run({ action: 'deleteGame', id: g.id })
+                      }
                     >
                       <Icon name="trash" size={16} />
                     </button>
@@ -1032,6 +1082,9 @@ function PickForm({ data, now, run, busy, presetGame }: { data: AdminData; now: 
   const [statType, setStatType] = useState('');
   const [line, setLine] = useState('');
   const [special, setSpecial] = useState(true);
+  const [tier, setTier] = useState<PickTier>('standard');
+  const [factor, setFactor] = useState('1.5');
+  const [withVenom, setWithVenom] = useState(true);
   const [note, setNote] = useState('');
 
   useEffect(() => {
@@ -1045,7 +1098,7 @@ function PickForm({ data, now, run, busy, presetGame }: { data: AdminData; now: 
   const sportCfg = game ? sportById(game.sport as never) : undefined;
   const stats = useMemo(() => [...new Set(Object.values(sportCfg?.stats ?? {}).flat().map((s) => s.stat))], [sportCfg]);
   const lineNum = Number(line);
-  const lineProblem = line === '' ? null : lineError(lineNum, REAL_MONEY);
+  const lineProblem = (line === '' ? null : lineError(lineNum, REAL_MONEY)) ?? tierError(tier, Number(factor));
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -1062,7 +1115,10 @@ function PickForm({ data, now, run, busy, presetGame }: { data: AdminData; now: 
         line: lineNum,
         special,
         note: note || undefined,
+        tier,
+        payoutFactor: tier === 'standard' ? 1 : Number(factor),
       },
+      autoVenom: tier === 'standard' && withVenom,
     });
     if (ok) {
       setPlayerName('');
@@ -1140,6 +1196,46 @@ function PickForm({ data, now, run, busy, presetGame }: { data: AdminData; now: 
           <input type="number" step={0.5} min={0.5} value={line} onChange={(e) => setLine(e.target.value)} required inputMode="decimal" placeholder="24.5" />
         </label>
       </div>
+      <div className="field">
+        <span>Line type</span>
+        <div className="seg">
+          {(['standard', 'venom', 'shield'] as PickTier[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={tier === t ? 'on' : ''}
+              onClick={() => {
+                setTier(t);
+                setFactor(t === 'venom' ? '1.5' : t === 'shield' ? '0.6' : '1');
+              }}
+            >
+              {t === 'standard' ? 'Standard' : t === 'venom' ? 'Venom' : 'Shield'}
+            </button>
+          ))}
+        </div>
+      </div>
+      {tier !== 'standard' && (
+        <label className="field">
+          <span>
+            Payout factor <small className="muted">({tier === 'venom' ? 'harder line, above 1 — e.g. 1.5 makes a 5× into 7.5×' : 'easier line, below 1 — e.g. 0.6 makes a 5× into 3×'}; More only)</small>
+          </span>
+          <input type="number" step="0.05" min={tier === 'venom' ? 1.05 : 0.25} max={tier === 'venom' ? 5 : 0.95} value={factor} onChange={(e) => setFactor(e.target.value)} inputMode="decimal" required />
+        </label>
+      )}
+      {tier === 'standard' && (
+        <label className="switch">
+          <input type="checkbox" checked={withVenom} onChange={(e) => setWithVenom(e.target.checked)} />
+          <span className="switch-ui" aria-hidden />
+          <span>
+            <strong>Auto Venom line</strong>
+            <small>
+              {line !== '' && !lineError(lineNum, REAL_MONEY)
+                ? `Also posts ${autoVenom(lineNum).line} at ×${autoVenom(lineNum).payoutFactor}, More only`
+                : 'Also posts a harder line that pays more, More only'}
+            </small>
+          </span>
+        </label>
+      )}
       {lineProblem && <p className="field-hint bad">{lineProblem}</p>}
       <label className="switch">
         <input type="checkbox" checked={special} onChange={(e) => setSpecial(e.target.checked)} />
@@ -1234,6 +1330,11 @@ function PicksTab({ data, now, run, busy, gameFilter, setGameFilter }: { data: A
                     </span>
                     <span className="pick-line">
                       <b>{p.line}</b> {p.statType}
+                      {p.tier && p.tier !== 'standard' && (
+                        <span className={`flag flag-${p.tier} adm-tier`}>
+                          {p.tier === 'venom' ? 'Venom' : 'Shield'} ×{p.payoutFactor}
+                        </span>
+                      )}
                       <span className="muted small"> · {g.away.abbr} @ {g.home.abbr}</span>
                     </span>
                     {p.note && <span className="muted small pick-note">“{p.note}”</span>}
@@ -1251,8 +1352,8 @@ function PicksTab({ data, now, run, busy, gameFilter, setGameFilter }: { data: A
                         className="icon-btn"
                         aria-label={`Change the line for ${p.playerName}`}
                         disabled={busy}
-                        onClick={() => {
-                          const v = prompt(`New line for ${p.playerName} ${p.statType} (now ${p.line}). Entries already placed keep the line they locked in.`, String(p.line));
+                        onClick={async () => {
+                          const v = await askPrompt({ title: `Change ${p.playerName}’s line`, message: `${p.statType}, now ${p.line}. Entries already placed keep the line they locked in.`, label: 'New line', defaultValue: String(p.line), inputMode: 'decimal', confirmLabel: 'Change line', required: true });
                           if (v !== null && v.trim() !== '' && Number(v) !== p.line) run({ action: 'updatePick', id: p.id, patch: { line: Number(v) } });
                         }}
                       >
@@ -1284,7 +1385,9 @@ function PicksTab({ data, now, run, busy, gameFilter, setGameFilter }: { data: A
                       className="icon-btn danger"
                       aria-label="Delete pick"
                       disabled={busy}
-                      onClick={() => confirm(`Delete ${p.playerName} ${p.line} ${p.statType}?`) && run({ action: 'deletePick', id: p.id })}
+                      onClick={async () =>
+                        (await askConfirm({ title: `Delete ${p.playerName} ${p.line} ${p.statType}?`, confirmLabel: 'Delete', destructive: true })) && run({ action: 'deletePick', id: p.id })
+                      }
                     >
                       <Icon name="trash" size={16} />
                     </button>

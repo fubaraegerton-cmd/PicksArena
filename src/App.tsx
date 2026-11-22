@@ -1,4 +1,6 @@
 import { useEffect } from 'react';
+import { DialogHost } from './components/NativeDialog';
+import { PullToRefresh, useCollapsingTitle, useTabNavigate } from './components/NativeShell';
 import { Link, NavLink, Route, Routes, useLocation } from 'react-router-dom';
 import { useStore } from './store';
 import { money } from './lib/format';
@@ -85,11 +87,14 @@ function Sidebar() {
 }
 
 /** Mobile top app bar */
-function AppBar() {
+function AppBar({ title }: { title: string | null }) {
   const { balance, realMoney, session } = useStore();
   return (
-    <header className="appbar">
+    <header className={`appbar ${title ? 'has-title' : ''}`}>
       <Brand />
+      <span className="appbar-title" aria-hidden={!title}>
+        {title}
+      </span>
       {realMoney && !session ? (
         <Link to="/login" className="balance-pill signin-pill">
           <span>Sign in</span>
@@ -108,10 +113,11 @@ function AppBar() {
 
 /** Mobile bottom tab bar */
 function TabBar() {
+  const go = useTabNavigate();
   return (
     <nav className="tabbar" aria-label="Main">
       {NAV.map((n) => (
-        <NavLink key={n.to} to={n.to} end={n.end}>
+        <NavLink key={n.to} to={n.to} end={n.end} onClick={(e) => go(e, n.to)}>
           <span className="tab-ico">
             <Icon name={n.icon} size={22} />
             {n.to === '/lineups' && <OpenBadge />}
@@ -124,8 +130,9 @@ function TabBar() {
 }
 
 export default function App() {
-  const { toast } = useStore();
+  const { toast, refreshAll } = useStore();
   const { pathname } = useLocation();
+  const title = useCollapsingTitle(pathname);
   useTheme();
 
   useEffect(() => {
@@ -135,7 +142,8 @@ export default function App() {
   return (
     <div className="shell">
       <Sidebar />
-      <AppBar />
+      <AppBar title={title} />
+      <PullToRefresh onRefresh={refreshAll}>
       <main className="content" key={pathname}>
         <ExclusionBanner />
         <Routes>
@@ -151,8 +159,10 @@ export default function App() {
           <Route path="*" element={<Home />} />
         </Routes>
       </main>
+      </PullToRefresh>
       <TabBar />
       <RealityCheck />
+      <DialogHost />
       {toast && (
         <div className="toast" role="status" key={toast}>
           {toast}

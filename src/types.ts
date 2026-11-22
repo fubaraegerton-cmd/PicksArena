@@ -41,6 +41,10 @@ export interface Projection {
   special?: boolean;
   /** Admin's short take */
   note?: string;
+  /** Alternate line: Venom (harder, pays more) or Shield (easier, pays less). More-only. */
+  tier?: 'standard' | 'venom' | 'shield';
+  /** Multiplies the entry payout (1 for standard lines) */
+  payoutFactor?: number;
 }
 
 export type Direction = 'more' | 'less';

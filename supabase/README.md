@@ -75,6 +75,17 @@ never run it against a real Supabase project.
 - `fail_pending_deposit(payment, reason, by)` — open checkout → failed; no money moves.
 - `player_sessions(user)` — Supabase Auth sessions as JSON, for the console.
 
+## Venom / Shield and countries (`…000008`)
+
+- `projections.tier` (`standard`/`venom`/`shield`) + `payout_factor`; `entry_picks.payout_factor` snapshot.
+- `entry_multiplier(legs, factor)` = power table × factor, 2 decimals, max 1000×.
+- `place_entry_unchecked` rejects Less on tiered lines (`tiered_more_only`) and flex with tiered lines;
+  `settle_entry` multiplies the factors of the legs that hit (pushes/voids drop out).
+- `countries` (250 ISO codes, all disabled, `min_age`), `profiles.country`,
+  `place_enabled(country, region)`, `min_age_for_place(home_country, home_region, loc_country, loc_region)`;
+  `money_gate` and `place_entry` use them.
+- Automatic Venom lines are created by the app (`autoVenom` in `src/shared/admin.ts`), not the database.
+
 ## Next phases
 
 7. fraud and risk.

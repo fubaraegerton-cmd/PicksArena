@@ -24,6 +24,7 @@ interface ProfileRow {
   id: string;
   dob: string | null;
   state: string | null;
+  country: string;
   kyc_status: string;
   self_exclusion_until: string | null;
   flags: Record<string, unknown>;
@@ -32,15 +33,20 @@ interface ProfileRow {
 export async function loadProfile(id: string): Promise<ProfileRow | null> {
   const { data, error } = await db()
     .from('profiles')
-    .select('id, dob, state, kyc_status, self_exclusion_until, flags')
+    .select('id, dob, state, country, kyc_status, self_exclusion_until, flags')
     .eq('id', id)
     .maybeSingle();
   if (error) throw new Error(error.message);
   return data as ProfileRow | null;
 }
 
-async function minAge(home: string | null, located: string | null): Promise<number> {
-  const { data, error } = await db().rpc('min_age_for', { p_home: home, p_located: located });
+async function minAge(homeCountry: string, homeRegion: string | null, locCountry: string | null, locRegion: string | null): Promise<number> {
+  const { data, error } = await db().rpc('min_age_for_place', {
+    p_home_country: homeCountry,
+    p_home_region: homeRegion,
+    p_loc_country: locCountry,
+    p_loc_region: locRegion,
+  });
   if (error) throw new Error(error.message);
   return Number(data);
 }
@@ -64,29 +70,31 @@ export async function profilePOST(req: Request) {
   if (r.error) return r.error;
   const limited = await rateLimit(`profile:${r.user.id}`, 10, 3600);
   if (limited) return limited;
-  let body: { dob?: string; state?: string };
+  let body: { dob?: string; state?: string; country?: string };
   try {
     body = await req.json();
   } catch {
     return json({ error: 'Invalid request.' }, 400);
   }
   const dob = String(body.dob ?? '');
-  const state = String(body.state ?? '').toUpperCase();
+  const country = String(body.country ?? 'US').toUpperCase();
+  const state = country === 'US' ? String(body.state ?? '').toUpperCase() : null;
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dob) || Number.isNaN(Date.parse(dob))) return json({ error: 'Enter your date of birth.' }, 422);
-  if (!US_STATES.has(state)) return json({ error: 'Choose the state you live in.' }, 422);
+  const { data: known } = await db().from('countries').select('code').eq('code', country).maybeSingle();
+  if (!known) return json({ error: 'Choose the country you live in.' }, 422);
+  if (country === 'US' && !US_STATES.has(state ?? '')) return json({ error: 'Choose the state you live in.' }, 422);
   const age = ageOn(dob);
   if (age > 120) return json({ error: 'Check your date of birth.' }, 422);
 
   // Log where sign-up happened (doesn't block sign-up; playing is geofenced separately).
   const geo = await checkLocation(req, r.user.id, 'signup');
-  const located = geo.country === 'US' ? geo.region : null;
-  const min = await minAge(state, located);
+  const min = await minAge(country, state, geo.country, geo.region);
   if (age < min) return json({ error: `You must be ${min} or older to play.` }, 403);
 
   const existing = await loadProfile(r.user.id);
   if (existing?.dob && existing.dob !== dob)
     return json({ error: 'Your date of birth is already on file. Contact support to correct it.' }, 409);
-  const { error } = await db().from('profiles').upsert({ id: r.user.id, dob, state });
+  const { error } = await db().from('profiles').upsert({ id: r.user.id, dob, state, country });
   if (error) return json({ error: error.message }, 500);
   await recordDevice(req, r.user.id);
   return json({ profile: await loadProfile(r.user.id) });
@@ -129,7 +137,7 @@ export async function entriesPOST(req: Request) {
   if (!Number.isInteger(stake)) return json({ error: 'Enter a whole number of cents.' }, 422);
 
   const profile = await loadProfile(r.user.id);
-  if (!profile?.dob || !profile.state) return json({ error: 'Finish setting up your account first.', code: 'profile_required' }, 403);
+  if (!profile?.dob) return json({ error: 'Finish setting up your account first.', code: 'profile_required' }, 403);
 
   await recordDevice(req, r.user.id);
   const geo = await checkLocation(req, r.user.id, 'entry');

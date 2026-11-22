@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { askConfirm, askPrompt } from '../../components/NativeDialog';
 import { adminAction, adminView } from '../../lib/adminApi';
 import { supabase } from '../../lib/supabase';
 
@@ -134,10 +135,10 @@ function PlayerDetail({ id, notify, onBack }: { id: string; notify: (m: string) 
             type="button"
             className="ghost-sm"
             disabled={busy}
-            onClick={() => {
-              const amount = prompt('Adjust balance by how many dollars? Use a negative number to debit.');
+            onClick={async () => {
+              const amount = await askPrompt({ title: 'Adjust balance', message: 'Use a negative number to debit.', label: 'Amount in dollars', inputMode: 'decimal', confirmLabel: 'Next', required: true });
               if (!amount) return;
-              const reason = prompt('Reason (stored on the ledger):');
+              const reason = await askPrompt({ title: `Adjust by $${amount}`, label: 'Reason (stored on the ledger)', confirmLabel: 'Adjust', required: true });
               if (reason) act({ action: 'creditFunds', email: d.user.email, amountCents: Math.round(Number(amount) * 100), reason }, 'Balance adjusted');
             }}
           >
@@ -196,10 +197,10 @@ function PlayerDetail({ id, notify, onBack }: { id: string; notify: (m: string) 
                             aria-label="Force-settle this leg"
                             disabled={busy}
                             value=""
-                            onChange={(ev) => {
+                            onChange={async (ev) => {
                               const result = ev.target.value;
                               if (!result) return;
-                              const reason = prompt(`Force this leg to "${result}". Reason (stored in the audit log):`);
+                              const reason = await askPrompt({ title: `Settle this leg as ${result}?`, label: 'Reason (stored in the audit log)', confirmLabel: 'Settle leg', destructive: true, required: true });
                               if (reason) act({ action: 'forceSettleLeg', entryId: e.id, projectionId: l.projection_id, result, reason }, 'Leg settled');
                             }}
                           >
@@ -469,7 +470,7 @@ export function OperatorsCard({ notify }: { notify: (m: string) => void }) {
             </div>
             {o.via === 'console' && (
               <div className="adm-row-actions">
-                <button type="button" className="ghost-sm" onClick={() => confirm(`Remove operator access for ${o.email}?`) && set(o.email, false)}>
+                <button type="button" className="ghost-sm" onClick={async () => (await askConfirm({ title: `Remove operator access for ${o.email}?`, confirmLabel: 'Remove', destructive: true })) && set(o.email, false)}>
                   Remove
                 </button>
               </div>
