@@ -88,8 +88,10 @@ export function Board() {
     <div className="board">
       <section className="board-main">
         <header className="page-head">
-          <p className="eyebrow">{isSpecials ? 'Hand-picked by the house' : 'Today’s board'}</p>
-          <h1>{isSpecials ? 'Specials' : 'Call it. More or less.'}</h1>
+          <h1>{isSpecials ? 'Specials' : `${PLAY_SPORTS.find((s) => s.id === sport)?.label ?? sport} board`}</h1>
+          <p className="page-sub">
+            {isSpecials ? 'Hand-picked by the house' : `${sportBoard.length} lines across ${games.length} ${games.length === 1 ? 'game' : 'games'}`}
+          </p>
         </header>
 
         <div className="board-sticky">
@@ -171,7 +173,7 @@ export function Board() {
             <Icon name="search" size={18} />
             <input
               type="search"
-              placeholder="Search players or teams"
+              placeholder="Search players"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               enterKeyHint="search"
