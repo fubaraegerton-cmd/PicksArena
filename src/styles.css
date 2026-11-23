@@ -2042,3 +2042,90 @@ body { font-size: 15px; line-height: 1.45; }
 .seg button.on { background: var(--seg-on); }
 .seg-sm button.on.more { background: var(--volt); }
 .seg-sm button.on.less { background: var(--ink); }
+
+/* =========================================================
+   Home: landing hero with a drawn phone showing the live board
+   ========================================================= */
+.home { gap: 48px; }
+.lp-hero { display: grid; gap: 32px; padding-top: 16px; }
+.lp-copy { display: grid; gap: 16px; align-content: center; }
+.lp-hero h1 { font-size: clamp(36px, 9vw, 64px); line-height: 1.04; font-weight: 600; letter-spacing: -0.03em; }
+.lp-sub { font-size: 17px; line-height: 1.55; color: var(--ink-2); max-width: 36rem; }
+.lp-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.lp-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: 48px; padding: 0 20px; border-radius: 12px; text-decoration: none;
+  font-size: 16px; font-weight: 600; border: 1px solid var(--line-strong); background: var(--surface); color: var(--ink);
+  transition: background 0.15s var(--ease), transform 0.1s var(--ease);
+}
+.lp-btn.primary { background: var(--volt); color: var(--on-volt); border-color: transparent; }
+.lp-btn:active { transform: scale(0.98); }
+@media (hover: hover) { .lp-btn:not(.primary):hover { background: var(--surface-2); } .lp-btn.primary:hover { filter: brightness(0.97); } }
+.lp-trust { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.lp-visual { display: grid; justify-items: center; }
+
+/* The phone: a real-looking device with the dark app inside */
+.phone {
+  width: min(300px, 78vw);
+  aspect-ratio: 300 / 610;
+  padding: 10px;
+  border-radius: 48px;
+  background: linear-gradient(160deg, #2a2a2c, #0e0e0f);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08), 0 1px 0 rgb(255 255 255 / 0.1) inset, 0 24px 48px rgb(0 0 0 / 0.22), 0 4px 12px rgb(0 0 0 / 0.12);
+}
+.phone-screen {
+  height: 100%;
+  border-radius: 38px;
+  overflow: hidden;
+  background: #141415;
+  color: #ededed;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 12px 12px;
+  font-size: 12px;
+}
+.ph-status { display: flex; align-items: center; justify-content: space-between; padding: 2px 8px 4px; font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.ph-island { width: 76px; height: 22px; border-radius: 12px; background: #000; }
+.ph-bal { padding: 2px 8px; border-radius: 8px; background: #232325; font-size: 11px; }
+.ph-title { font-size: 20px; font-weight: 600; letter-spacing: -0.01em; padding: 4px 4px 0; }
+.ph-rows { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+.ph-row { display: grid; gap: 8px; padding: 12px; border-radius: 14px; background: #1c1c1e; box-shadow: inset 0 0 0 1px rgb(237 237 237 / 0.06); }
+.ph-head { display: flex; justify-content: space-between; color: #85858b; font-size: 11px; }
+.ph-head span:first-child { display: inline-flex; align-items: center; gap: 6px; color: #a1a1a6; }
+.ph-body { display: flex; align-items: flex-end; justify-content: space-between; gap: 8px; }
+.ph-body strong { font-size: 14px; font-weight: 600; line-height: 1.2; }
+.ph-line { display: grid; justify-items: end; }
+.ph-line b { font-size: 26px; line-height: 1; font-weight: 600; font-stretch: 75%; font-variant-numeric: tabular-nums; }
+.ph-line small { font-size: 10px; color: #a1a1a6; white-space: nowrap; }
+.ph-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 3px; padding: 3px; border-radius: 9px; background: #232325; }
+.ph-pick span { display: grid; place-items: center; height: 26px; border-radius: 6px; color: #a1a1a6; font-weight: 600; font-size: 11px; }
+.ph-pick .on.more { background: var(--volt); color: #171717; }
+.ph-pick .on.less { background: #ededed; color: #171717; }
+.ph-ticket { margin-top: auto; display: flex; align-items: center; gap: 10px; padding: 8px 12px 8px 8px; border-radius: 14px; background: #2a2a2c; }
+.ph-count { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--volt); color: #171717; font-weight: 600; font-size: 15px; }
+.ph-tt { display: grid; flex: 1; line-height: 1.25; }
+.ph-tt strong { font-size: 13px; font-weight: 600; }
+.ph-tt small { font-size: 11px; color: #a1a1a6; }
+.ph-pay { font-weight: 600; font-size: 15px; color: var(--volt); font-variant-numeric: tabular-nums; }
+
+/* Phones: the device sits under the actions and is cropped so the page keeps moving */
+@media (max-width: 899px) {
+  .lp-visual { max-height: 440px; overflow: hidden; -webkit-mask-image: linear-gradient(#000 78%, transparent); mask-image: linear-gradient(#000 78%, transparent); }
+}
+@media (min-width: 900px) {
+  .lp-hero { grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); gap: 48px; align-items: center; padding: 32px 0 8px; min-height: min(680px, calc(100dvh - 48px)); }
+  .phone { width: 300px; }
+}
+
+/* Sports strip */
+.sport-strip { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-top: -16px; }
+.ss-item { display: grid; gap: 2px; padding: 12px 16px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); text-decoration: none; transition: border-color 0.15s var(--ease); }
+.ss-item strong { font-size: 16px; font-weight: 600; }
+.ss-item span { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (hover: hover) { .ss-item:hover { border-color: var(--line-strong); } }
+@media (max-width: 599px) { .sport-strip { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Featured line keeps its night panel; it is no longer the page h1 */
+.turf { border-radius: 20px; margin: 0; }
+.home .how { scroll-margin-top: calc(var(--appbar-h) + var(--safe-t) + 16px); }

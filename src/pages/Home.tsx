@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useStore } from '../store';
 import { SPORTS } from '../data/sports';
 import { PLAY_SPORTS, REAL_MONEY } from '../lib/supabase';
+import { entryMultiplier } from '../lib/payouts';
+import { money } from '../lib/format';
 import type { Direction, Projection } from '../types';
 import { ProjectionCard, Jersey } from '../components/ProjectionCard';
 import { Icon } from '../components/Icon';
@@ -32,7 +34,7 @@ function Hero({ p }: { p: Projection }) {
       <div className="hero-player">
         <Jersey color={p.player.team.color} number={p.player.number} />
         <div>
-          <h1 className="hero-name">{p.player.name}</h1>
+          <h2 className="hero-name">{p.player.name}</h2>
           <p className="hero-sub">
             {p.player.team.name}, {p.player.position}. {isHome ? 'Hosts' : 'At'} {p.opponent.abbr}{' '}
             {soon && soon !== 'Started' ? `in ${soon}` : gameTime(p.game.startsAt, now).replace('Tmrw', 'tomorrow').replace('Today', 'today')}.
@@ -76,6 +78,133 @@ function Hero({ p }: { p: Projection }) {
   );
 }
 
+
+/** Lines for the phone preview: the featured line plus two more from other teams in the same sport. */
+function previewLines(board: Projection[], featured: Projection | undefined, now: number): Projection[] {
+  if (!featured) return [];
+  const out = [featured];
+  for (const p of board) {
+    if (out.length === 3) break;
+    if (p.game.startsAt <= now || p.tier || p.player.sport !== featured.player.sport) continue;
+    if (out.some((x) => x.player.team.abbr === p.player.team.abbr || x.player.id === p.player.id)) continue;
+    out.push(p);
+  }
+  return out;
+}
+
+/** A drawn phone showing the real board: the product, not a stock picture. */
+function PhonePreview({ lines }: { lines: Projection[] }) {
+  if (lines.length < 2) return null;
+  const calls: Direction[] = ['more', 'less', 'more'];
+  const mult = entryMultiplier(lines);
+  const label = `Preview of the app: a ${lines.length}-pick ticket paying ${mult} times the entry`;
+  return (
+    <div className="phone" role="img" aria-label={label}>
+      <div className="phone-screen" aria-hidden>
+        <div className="ph-status">
+          <span>9:41</span>
+          <span className="ph-island" />
+          <span className="ph-bal">{money(100)}</span>
+        </div>
+        <p className="ph-title">{SPORTS.find((x) => x.id === lines[0].player.sport)?.label ?? lines[0].player.sport} board</p>
+        <ul className="ph-rows">
+          {lines.map((p, i) => (
+            <li key={p.id} className="ph-row" style={{ '--team': p.player.team.color } as CSSProperties}>
+              <div className="ph-head">
+                <span>
+                  <i className="pc-dot" />
+                  {p.player.team.abbr} · {p.player.position}
+                </span>
+                <span>{p.opponent.abbr}</span>
+              </div>
+              <div className="ph-body">
+                <strong>{p.player.name}</strong>
+                <span className="ph-line">
+                  <b>{p.line}</b>
+                  <small>{p.statType}</small>
+                </span>
+              </div>
+              <div className="ph-pick">
+                <span className={calls[i] === 'less' ? 'on less' : ''}>Less</span>
+                <span className={calls[i] === 'more' ? 'on more' : ''}>More</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <div className="ph-ticket">
+          <span className="ph-count">{lines.length}</span>
+          <span className="ph-tt">
+            <strong>Power Play</strong>
+            <small>{mult}× if all hit</small>
+          </span>
+          <span className="ph-pay">{money(10 * mult)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LandingHero({ lines }: { lines: Projection[] }) {
+  const { realMoney, session } = useStore();
+  const top = maxMultiplier('power', MAX_PICKS);
+  const sports = PLAY_SPORTS.map((x) => x.label);
+  const sportList = sports.length > 2 ? `${sports.slice(0, -1).join(', ')} and ${sports[sports.length - 1]}` : sports.join(' and ');
+  const signUp = realMoney && !session;
+  return (
+    <section className="lp-hero" aria-labelledby="lp-title">
+      <div className="lp-copy">
+        <h1 id="lp-title" data-title="Home">
+          More or less.
+          <br />
+          Call it. Win up to {top}×
+        </h1>
+        <p className="lp-sub">
+          Pick 2 to {MAX_PICKS} players from {sportList} and say if they’ll go over or under their line. Get every call right and your entry pays up to {top} times.
+        </p>
+        <div className="lp-actions">
+          <Link to={signUp ? '/login?next=/board' : '/board'} className="lp-btn primary">
+            {signUp ? 'Create account' : 'Start picking'}
+            <Icon name="arrow" size={18} strokeWidth={2} />
+          </Link>
+          <a href="#how" className="lp-btn">
+            How it works
+          </a>
+        </div>
+        <p className="lp-trust">
+          {realMoney ? (
+            <>
+              <Icon name="shield" size={16} /> 21+ in the US, 18+ elsewhere. Eligible locations only.
+            </>
+          ) : (
+            <>
+              <Icon name="check" size={16} /> Free to try with $100 in play credits
+            </>
+          )}
+        </p>
+      </div>
+      <div className="lp-visual">
+        <PhonePreview lines={lines} />
+      </div>
+    </section>
+  );
+}
+
+function SportStrip({ board, now }: { board: Projection[]; now: number }) {
+  return (
+    <nav className="sport-strip" aria-label="Sports on the board">
+      {PLAY_SPORTS.map((x) => {
+        const n = board.filter((p) => p.player.sport === x.id && p.game.startsAt > now).length;
+        return (
+          <Link key={x.id} to={`/board?sport=${x.id}`} className="ss-item">
+            <strong>{x.label}</strong>
+            <span>{n ? `${n} lines` : 'No games today'}</span>
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
 function StartingSoon({ board, now }: { board: Projection[]; now: number }) {
   const games = useMemo(() => {
     const m = new Map<string, { p: Projection; lines: number }>();
@@ -116,60 +245,6 @@ function StartingSoon({ board, now }: { board: Projection[]; now: number }) {
         See the full board
       </Link>
     </aside>
-  );
-}
-
-function SportTable({ board, now }: { board: Projection[]; now: number }) {
-  const rows = PLAY_SPORTS.map((s) => {
-    const lines = board.filter((p) => p.player.sport === s.id && p.game.startsAt > now);
-    const games = new Set(lines.map((p) => p.game.id));
-    const next = lines.reduce((m, p) => Math.min(m, p.game.startsAt), Infinity);
-    const specials = lines.filter((p) => p.special).length;
-    return { s, lines: lines.length, games: games.size, next, specials };
-  });
-  return (
-    <section className="home-sec" aria-labelledby="sports-title">
-      <h2 id="sports-title" className="home-h2">
-        Today on the board
-      </h2>
-      <table className="sport-table">
-        <thead>
-          <tr>
-            <th scope="col">Sport</th>
-            <th scope="col">Games</th>
-            <th scope="col">Lines</th>
-            <th scope="col" className="hide-sm">
-              First game
-            </th>
-            <th scope="col">
-              <span className="sr">Open</span>
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(({ s, lines, games, next, specials }) => (
-            <tr key={s.id}>
-              <th scope="row">
-                <Link to={`/board?sport=${s.id}`}>{s.label}</Link>
-                {specials > 0 && (
-                  <span className="st-special" title={`${specials} house specials`}>
-                    <Icon name="star" size={12} strokeWidth={2.5} /> {specials}
-                  </span>
-                )}
-              </th>
-              <td>{games}</td>
-              <td>{lines}</td>
-              <td className="hide-sm">{Number.isFinite(next) ? gameTime(next, now) : 'None today'}</td>
-              <td>
-                <Link to={`/board?sport=${s.id}`} className="st-go" aria-label={`Open ${s.label} board`}>
-                  <Icon name="arrow" size={18} />
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </section>
   );
 }
 
@@ -249,9 +324,13 @@ export function Home() {
   }, [board, now, featured]);
   const hasSpecials = showcase.some((p) => p.special);
   const selected = useMemo(() => new Map(picks.map((p) => [p.projectionId, p.direction])), [picks]);
+  const preview = useMemo(() => previewLines(board, featured, now), [board, featured, now]);
 
   return (
     <div className="home">
+      <LandingHero lines={preview} />
+      <SportStrip board={board} now={now} />
+
       <section className="turf" aria-label="Featured line">
         {featured ? <Hero p={featured} /> : <p className="hero-empty">No games on the board right now. Check back soon.</p>}
         <StartingSoon board={board} now={now} />
@@ -277,12 +356,10 @@ export function Home() {
         </section>
       )}
 
-      <SportTable board={board} now={now} />
-
-      <section className="home-sec how" aria-labelledby="how-title">
+      <section className="home-sec how" id="how" aria-labelledby="how-title">
         <div>
           <h2 id="how-title" className="home-h2">
-            How a ticket works
+            How it works
           </h2>
           <ol className="how-steps">
             <li>

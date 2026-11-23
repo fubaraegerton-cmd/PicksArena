@@ -17,11 +17,11 @@ export function useCollapsingTitle(pathname: string): string | null {
     setTitle(null);
     let obs: IntersectionObserver | null = null;
     const t = setTimeout(() => {
-      const h1 = document.querySelector<HTMLElement>('.content .page-head h1, .content .hero-name');
+      const h1 = document.querySelector<HTMLElement>('.content .lp-hero h1, .content .page-head h1, .content .hero-name');
       if (!h1) return;
       const appbar = document.querySelector<HTMLElement>('.appbar');
       const top = appbar ? appbar.getBoundingClientRect().height : 56;
-      obs = new IntersectionObserver(([e]) => setTitle(e.isIntersecting ? null : h1.textContent?.trim() || null), {
+      obs = new IntersectionObserver(([e]) => setTitle(e.isIntersecting ? null : h1.dataset.title || h1.textContent?.trim() || null), {
         rootMargin: `-${Math.round(top)}px 0px 0px 0px`,
       });
       obs.observe(h1);
