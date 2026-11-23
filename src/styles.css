@@ -2491,3 +2491,39 @@ html.home-stage .side-wallet { background: var(--x-card); border-color: var(--x-
   .x-every, .x-feature { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 @media (min-width: 900px) { .x-hero .x-display { font-size: clamp(56px, 6.2vw, 92px); } }
+
+/* =========================================================
+   Desktop: menu across the top instead of a left sidebar
+   ========================================================= */
+@media (min-width: 960px) {
+  :root { --side-w: 0px; --topnav-h: 64px; }
+  .sidebar.topnav {
+    inset: 0 0 auto 0;
+    width: auto;
+    height: var(--topnav-h);
+    flex-direction: row;
+    align-items: center;
+    gap: 32px;
+    padding: 0 var(--gutter);
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: saturate(1.4) blur(14px);
+    -webkit-backdrop-filter: saturate(1.4) blur(14px);
+  }
+  .topnav .brand { padding: 0; }
+  .topnav .side-nav { display: flex; align-items: center; gap: 4px; }
+  .topnav .side-nav a { height: 36px; padding: 0 14px; border-radius: 999px; gap: 6px; font-size: 15px; }
+  .topnav .side-nav a.active { box-shadow: none; background: var(--surface-2); color: var(--ink); }
+  .tn-right { margin-left: auto; display: flex; align-items: center; gap: 16px; }
+  .tn-link { font-size: 15px; font-weight: 500; text-decoration: underline; text-underline-offset: 3px; }
+  .tn-cta { display: inline-flex; align-items: center; height: 40px; padding: 0 18px; border-radius: 999px; background: var(--volt); color: var(--on-volt); font-weight: 600; text-decoration: none; }
+  .content { margin-left: 0; padding-top: calc(var(--topnav-h) + 28px); }
+  .board-sticky { top: var(--topnav-h); }
+  .board-side { top: calc(var(--topnav-h) + 20px); max-height: calc(100dvh - var(--topnav-h) - 40px); }
+  .xhome { margin-top: -28px; }
+  html.home-stage .sidebar.topnav { background: rgb(5 6 15 / 0.82); border-bottom-color: var(--x-line); }
+  html.home-stage .topnav .side-nav a.active { background: var(--x-card); color: var(--x-text); }
+  html.home-stage .topnav .balance-pill { background: var(--x-card); color: var(--x-text); border-color: var(--x-line); }
+  html.home-stage .tn-link { color: var(--x-text); }
+}

@@ -52,37 +52,40 @@ function OpenBadge() {
   return n > 0 ? <span className="nav-badge">{n}</span> : null;
 }
 
-/** Desktop / tablet-landscape sidebar */
+/** Desktop top navigation bar */
 function Sidebar() {
   const { balance, realMoney, session } = useStore();
   return (
-    <aside className="sidebar">
+    <header className="sidebar topnav">
       <Brand />
       <nav className="side-nav" aria-label="Main">
         {NAV.map((n) => (
           <NavLink key={n.to} to={n.to} end={n.end}>
-            <Icon name={n.icon} size={20} />
             <span>{n.label}</span>
             {n.to === '/lineups' && <OpenBadge />}
           </NavLink>
         ))}
       </nav>
-      {realMoney && !session ? (
-        <Link to="/login" className="side-wallet">
-          <span className="eyebrow">Real-money play</span>
-          <strong>Sign in</strong>
-          <span className="add">or create an account</span>
-        </Link>
-      ) : (
-        <Link to="/account" className="side-wallet">
-          <span className="eyebrow">Balance</span>
-          <strong>{money(balance)}</strong>
-          <span className="add">
-            <Icon name="plus" size={14} strokeWidth={3} /> {realMoney ? 'Wallet' : 'Add credits'}
-          </span>
-        </Link>
-      )}
-    </aside>
+      <div className="tn-right">
+        {realMoney && !session ? (
+          <>
+            <Link to="/login" className="tn-link">
+              Sign in
+            </Link>
+            <Link to="/login" className="tn-cta">
+              Create account
+            </Link>
+          </>
+        ) : (
+          <Link to="/account" className="balance-pill" aria-label={`Balance ${money(balance)}. ${realMoney ? 'Open wallet' : 'Add credits'}`}>
+            {money(balance)}
+            <span className="plus" aria-hidden>
+              <Icon name="plus" size={14} strokeWidth={3} />
+            </span>
+          </Link>
+        )}
+      </div>
+    </header>
   );
 }
 
