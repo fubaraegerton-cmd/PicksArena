@@ -987,7 +987,22 @@ function GamesTab({ data, now, run, busy, go }: { data: AdminData; now: number; 
 
   return (
     <div className="adm-split">
-      <GameForm run={run} busy={busy} />
+      <div className="adm-stack">
+        {REAL_MONEY && (
+          <section className="adm-card adm-feed">
+            <header className="adm-card-head">
+              <h2>Live data</h2>
+            </header>
+            <p className="muted small">
+              Real NBA and NFL games import automatically from TheSportsDB about every 5 minutes, and their scores and final status update on their own. Add lines to them below; Venom lines follow automatically.
+            </p>
+            <button type="button" className="ghost-sm" disabled={busy} onClick={() => run({ action: 'syncFeed' } as unknown as AdminAction)}>
+              Sync games now
+            </button>
+          </section>
+        )}
+        <GameForm run={run} busy={busy} />
+      </div>
       <section className="adm-card">
         <header className="adm-card-head">
           <h2>Games</h2>

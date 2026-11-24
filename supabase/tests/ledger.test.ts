@@ -92,7 +92,7 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
     await admin.end();
     db = new pg.Pool({ host: HOST, port: PORT, user: USER, database: DB, max: 6 });
     await db.query(read('tests/supabase_shim.sql'));
-    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments', '20261122000005_responsible_gaming_audit', '20261122000006_limit_usage_checkout_window', '20261123000007_operator_console', '20261124000008_venom_shield_and_countries'])
+    for (const m of ['20261119000001_ledger_and_entries', '20261119000002_slate_details', '20261120000003_compliance_gates', '20261121000004_payments', '20261122000005_responsible_gaming_audit', '20261122000006_limit_usage_checkout_window', '20261123000007_operator_console', '20261124000008_venom_shield_and_countries', '20261124000009_feed_state'])
       await db.query(read(`migrations/${m}.sql`));
     await db.query(`update public.jurisdictions set enabled = true where state in ('NJ', 'PA')`);
   });
@@ -890,5 +890,14 @@ describe.skipIf(!HOST)('money core (Postgres)', () => {
     expect(await reconcile()).toEqual([]);
     const total = await one<{ s: string }>(`select coalesce(sum(amount_cents),0)::text as s from public.ledger_postings`);
     expect(total!.s).toBe('0');
+  });
+
+  describe('live data feed', () => {
+    it('claim_feed_run lets one run through per interval', async () => {
+      const first = await q<{ ok: boolean }>(`select public.claim_feed_run('t-feed', 300) as ok`);
+      const second = await q<{ ok: boolean }>(`select public.claim_feed_run('t-feed', 300) as ok`);
+      const forced = await q<{ ok: boolean }>(`select public.claim_feed_run('t-feed', 0) as ok`);
+      expect([first[0].ok, second[0].ok, forced[0].ok]).toEqual([true, false, true]);
+    });
   });
 });

@@ -86,6 +86,12 @@ never run it against a real Supabase project.
   `money_gate` and `place_entry` use them.
 - Automatic Venom lines are created by the app (`autoVenom` in `src/shared/admin.ts`), not the database.
 
+## Live data feed (`…000009`)
+
+- `feed_state` (last run, last result, last error) and `claim_feed_run(key, every_seconds)`, which lets
+  one request at a time take the next import run. Games imported from TheSportsDB carry
+  `external_id = 'tsdb:<event id>'`.
+
 ## Next phases
 
 7. fraud and risk.

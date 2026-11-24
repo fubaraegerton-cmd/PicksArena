@@ -8,6 +8,7 @@ import { ProjectionCard } from '../components/ProjectionCard';
 import { Slip } from '../components/Slip';
 import { BottomSheet } from '../components/BottomSheet';
 import { Icon } from '../components/Icon';
+import { ScoresRail } from '../components/Scores';
 import { entryMultiplier, maxMultiplier } from '../lib/payouts';
 import { gameTime, money } from '../lib/format';
 import { haptic } from '../lib/device';
@@ -139,6 +140,8 @@ export function Board() {
             </div>
           </div>
         </div>
+
+        <ScoresRail />
 
         <div className="scroller games" aria-label="Games">
           <button

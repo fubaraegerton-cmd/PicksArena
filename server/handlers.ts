@@ -5,6 +5,7 @@ import { audit, db, rateLimit, supabaseConfigured } from './supabase.js';
 import { OperatorError, applySlateAction, loadSlate } from './slate.js';
 import { applyDecision } from './kyc.js';
 import { ConsoleError, addNote, failPendingDeposit, forceSettleLeg, isOperatorUser, listOperators, pendingDeposits, playerDetail, playerSearch, setOperator } from './console.js';
+import { feedStatus, maybeSync } from './feed.js';
 import { PaymentsOperatorError, importSettlements, paymentsView, reviewWithdrawal, simulateChargeback } from './payments.js';
 
 const json = (body: unknown, status = 200, extra: Record<string, string> = {}) =>
@@ -50,6 +51,10 @@ async function authError(req: Request): Promise<Response | null> {
 /** GET /api/board — public: admin games and picks for the app */
 export async function boardGET(): Promise<Response> {
   try {
+    if (supabaseConfigured()) {
+      // Keep real games and scores current; never hold the board up for more than a few seconds.
+      await Promise.race([maybeSync().catch(() => undefined), new Promise((r) => setTimeout(r, 4000))]);
+    }
     const data = supabaseConfigured() ? await loadSlate('public') : await loadData();
     return json(data, 200, { 'cache-control': 'public, max-age=0, s-maxage=10, stale-while-revalidate=30' });
   } catch (e) {
@@ -62,6 +67,7 @@ export async function adminGET(req: Request): Promise<Response> {
   const err = await authError(req);
   if (err) return err;
   try {
+    if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'feed') return json({ feed: await feedStatus() });
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'compliance') return json(await complianceView());
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'payments') return json(await paymentsView(await emailsById()));
     if (supabaseConfigured() && new URL(req.url).searchParams.get('view') === 'audit') return json(await auditView(new URL(req.url).searchParams));
@@ -142,6 +148,13 @@ async function operatorAction(body: AdminAction & { baseVersion?: number }, act:
         } catch (e) {
           return json({ error: (e as Error).message }, e instanceof ConsoleError ? 422 : 500);
         }
+      }
+      if (act === 'syncFeed') {
+        const r = await maybeSync(true);
+        if (r.error) return json({ error: `Feed sync failed: ${r.error}`, data: await loadSlate('operator') }, 502);
+        const x = r.result;
+        const note = x ? `Imported ${x.imported} games, updated ${x.updated}, ${x.finals} final` : 'Nothing to sync';
+        return json({ ok: true, note, data: await loadSlate('operator'), feed: await feedStatus() });
       }
       if (act === 'setJurisdiction' || act === 'setCountry' || act === 'kycDecision' || act === 'setBlocked')
         return await complianceAction(body as unknown as ComplianceAction, by);

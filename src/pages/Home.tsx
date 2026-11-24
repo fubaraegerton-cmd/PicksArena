@@ -5,6 +5,7 @@ import { SPORTS } from '../data/sports';
 import { PLAY_SPORTS, REAL_MONEY } from '../lib/supabase';
 import type { Direction, Projection, SportId } from '../types';
 import { Icon } from '../components/Icon';
+import { ScoresRail } from '../components/Scores';
 import { FLEX_TABLE, MAX_PICKS, MIN_ENTRY, POWER_TABLE, entryMultiplier, maxMultiplier } from '../lib/payouts';
 import { countdown, gameTime, money } from '../lib/format';
 import { haptic, useInstallPrompt } from '../lib/device';
@@ -637,6 +638,10 @@ export function Home() {
       <Hero cards={heroCards} />
 
       <Band label="Get started" text={REAL_MONEY ? `Entries from ${money(MIN_ENTRY)}. Payouts up to ${maxMultiplier('power', MAX_PICKS)}×.` : `Start with ${money(100)} in play credits`} cta="Start picking" to="/board" />
+
+      <div className="x-scores">
+        <ScoresRail tone="dark" title="Live scores" />
+      </div>
 
       <HowToPlay />
 
