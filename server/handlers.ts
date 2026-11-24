@@ -4,7 +4,7 @@ import { loadData, saveData, storageMode } from './storage.js';
 import { audit, db, rateLimit, supabaseConfigured } from './supabase.js';
 import { OperatorError, applySlateAction, loadSlate } from './slate.js';
 import { applyDecision } from './kyc.js';
-import { ConsoleError, addNote, failPendingDeposit, forceSettleLeg, isOperatorUser, listOperators, pendingDeposits, playerDetail, playerSearch, setOperator } from './console.js';
+import { ConsoleError, addNote, failPendingDeposit, forceSettleLeg, isOperatorUser, listOperators, playerDetail, playerSearch, setOperator } from './console.js';
 import { feedStatus, maybeSync } from './feed.js';
 import { PaymentsOperatorError, importSettlements, paymentsView, reviewWithdrawal, simulateChargeback } from './payments.js';
 
