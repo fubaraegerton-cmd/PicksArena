@@ -31,7 +31,7 @@ function useScoreboard() {
   const [failed, setFailed] = useState(false);
   const load = useCallback(async () => {
     try {
-      const r = await fetch('/api/scores');
+      const r = await fetch('/api/board?view=scores');
       if (!r.ok) throw new Error(String(r.status));
       setData((await r.json()) as Scoreboard);
       setFailed(false);

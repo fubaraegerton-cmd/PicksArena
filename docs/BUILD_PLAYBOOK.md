@@ -345,14 +345,14 @@ automatically via `autoVenom`.
 
 ## 13. Live data from TheSportsDB
 
-Files: `server/sportsdb.ts` (client), `server/feed.ts` (scores endpoint + importer), `api/scores.ts`,
+Files: `server/sportsdb.ts` (client), `server/feed.ts` (scores endpoint + importer), `api/board.ts` (`?view=scores`, sharing the function because the Hobby plan allows 12),
 `src/components/Scores.tsx`, migration `…_feed_state.sql`.
 
 1. **What the feed gives.** TheSportsDB (free key `123`): real schedules, teams, badges, colours and
    final scores. Free tier limits: about 3 events per league per day, no in-game scores. A premium
    key in `THESPORTSDB_KEY` lifts the limits and turns on the v2 livescore overlay automatically.
    It has **no player stats or projections**, so it cannot create or grade player lines.
-2. **Scores strip.** `GET /api/scores` returns yesterday/today/tomorrow for NBA, NFL, NHL, MLB,
+2. **Scores strip.** `GET /api/board?view=scores` returns yesterday/today/tomorrow for NBA, NFL, NHL, MLB,
    Premier League and college football, cached 60 s in the function and at the CDN. The strip on Home
    and Board refreshes every minute and when the app returns to the foreground. Attribution links back
    to TheSportsDB.
